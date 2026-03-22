@@ -4,7 +4,7 @@ const supabase = require('../config/supabaseClient');
 const submitConsultation = async (req, res) => {
     try {
         const { student_id, subject, week, message } = req.body;
-        const username = req.user.username; // dari authMiddleware
+        // const username = req.user.username; // <--- Ini tidak kita pakai lagi untuk insert tabel ini
 
         if (!student_id || !message) {
             return res.status(400).json({ status: "error", message: "Data tidak lengkap" });
@@ -21,7 +21,7 @@ const submitConsultation = async (req, res) => {
 
             // Proses upload dari memory (buffer) langsung ke Supabase
             const { data: uploadData, error: uploadError } = await supabase.storage
-                .from('consultations') // Nama bucket yang kamu buat di Langkah 1
+                .from('consultations')
                 .upload(filePath, req.file.buffer, {
                     contentType: req.file.mimetype,
                     upsert: false
@@ -37,7 +37,7 @@ const submitConsultation = async (req, res) => {
                 .from('consultations')
                 .getPublicUrl(filePath);
 
-            image_url = publicUrlData.publicUrl; // Ini yang akan disimpan ke Database!
+            image_url = publicUrlData.publicUrl; // Ini yang akan disimpan ke Database
         }
 
         // 2. SIMPAN DATA KE DATABASE (Tabel consultations)
@@ -46,15 +46,17 @@ const submitConsultation = async (req, res) => {
             .insert([{
                 student_id,
                 subject,
-                week: parseInt(week),
+                week: week ? parseInt(week) : null, // Amankan jika week kosong
                 message,
-                image_url, // Berisi link HTTPS Supabase, atau null jika tidak ada foto
-                created_by: username
+                image_url // Berisi link HTTPS Supabase, atau null jika tidak ada foto
             }])
             .select()
             .single();
 
-        if (error) throw error;
+        if (error) {
+            console.error("Supabase Insert Error:", error.message);
+            throw error;
+        }
 
         res.status(201).json({ status: "success", data });
 
