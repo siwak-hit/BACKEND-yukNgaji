@@ -3,11 +3,10 @@ const supabase = require('../config/supabaseClient');
 // POST /api/consultations
 const submitConsultation = async (req, res) => {
     try {
-        const { student_id, subject, week, message } = req.body;
-        // const username = req.user.username; // <--- Ini tidak kita pakai lagi untuk insert tabel ini
+        const { student_id, subject, week, akhlak_score, disiplin_score, aktif_score } = req.body;
 
-        if (!student_id || !message) {
-            return res.status(400).json({ status: "error", message: "Data tidak lengkap" });
+        if (!student_id) {
+            return res.status(400).json({ status: "error", message: "Data siswa tidak lengkap" });
         }
 
         let image_url = null;
@@ -40,15 +39,17 @@ const submitConsultation = async (req, res) => {
             image_url = publicUrlData.publicUrl; // Ini yang akan disimpan ke Database
         }
 
-        // 2. SIMPAN DATA KE DATABASE (Tabel consultations)
-        const { data, error } = await supabase
+            // 2. SIMPAN DATA KE DATABASE (Tabel consultations)
+            const { data, error } = await supabase
             .from('consultations')
             .insert([{
                 student_id,
                 subject,
-                week: week ? parseInt(week) : null, // Amankan jika week kosong
-                message,
-                image_url // Berisi link HTTPS Supabase, atau null jika tidak ada foto
+                week: week ? parseInt(week) : null,
+                akhlak_score: parseInt(akhlak_score) || 0,
+                disiplin_score: parseInt(disiplin_score) || 0,
+                aktif_score: parseInt(aktif_score) || 0,
+                image_url 
             }])
             .select()
             .single();

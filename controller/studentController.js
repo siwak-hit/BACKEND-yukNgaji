@@ -140,55 +140,75 @@ const getStudentAttendance = async (req, res) => {
         const { id } = req.params;
         const username = req.user.username;
 
-        // Ambil semua riwayat absensi dari guru ini
-        const { data, error } = await supabase
+        // 1. Ambil semua riwayat absensi yang pernah dibuat oleh guru ini
+        const { data: attendances, error } = await supabase
             .from('attendances')
-            .select('*')
-            .eq('created_by', username)
-            .order('date', { ascending: true });
+            .select('date, present_students')
+            .eq('created_by', username);
 
         if (error) throw error;
 
-        let stats = { hadir: 0, izin: 0, alpa: 0 };
-        let todayStatus = null; // null = Belum Absen
+        // 2. Siapkan variabel perhitungan
+        let hadir = 0;
+        let izin = 0;
+        let alpa = 0;
+        let todayStatus = null;
         
-        const jakartaTimeStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Jakarta' });
-        const todayStr = new Date(jakartaTimeStr).toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+        // Aturan Hari Wajib: 1=Senin, 2=Selasa, 3=Rabu, 5=Jumat. (0, 4, 6 = Sunnah)
+        const mandatoryDays = [1, 2, 3, 5]; 
+        
+        // Ambil tanggal hari ini versi Jakarta (YYYY-MM-DD)
+        const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
 
-        data.forEach(record => {
-            const isToday = record.date === todayStr;
-            let status = 'alpa'; // Default jika record ada tapi nama anak ga di-ceklis
+        // 3. Looping semua data absensi untuk menghitung statistik anak ini
+        attendances.forEach(att => {
+            const studentAtt = att.present_students[id];
+            
+            // Jika anak ini tidak ada di daftar absen hari itu, lewati
+            if (!studentAtt) return; 
 
-            // Cek kompatibilitas (bisa Array model lama, bisa Object model baru)
-            if (Array.isArray(record.present_students)) {
-                if (record.present_students.includes(id)) status = 'hadir';
-            } else if (record.present_students && record.present_students[id]) {
-                status = record.present_students[id].status || 'hadir';
+            const status = studentAtt.status;
+            // Ambil angka hari dari tanggal absen (0 = Minggu, 1 = Senin, dst)
+            const dow = new Date(att.date).getDay();
+            const isMandatory = mandatoryDays.includes(dow);
+
+            // Set status hari ini jika tanggalnya cocok
+            if (att.date === todayStr) {
+                todayStatus = status;
             }
 
-            // Hitung statistik
-            if (status === 'hadir') stats.hadir++;
-            else if (status.startsWith('izin')) stats.izin++;
-            else stats.alpa++; // Termasuk 'alpa' eksplisit maupun tidak diabsen
-
-            // Set status khusus hari ini
-            if (isToday) todayStatus = status;
+            // --- LOGIKA SUNNAH & WAJIB ---
+            if (status === 'hadir') {
+                // Jika HADIR, mau hari wajib atau sunnah, TETAP DIHITUNG! (Bonus)
+                hadir++;
+            } else if (isMandatory) {
+                // Jika TIDAK HADIR, HANYA dihitung kalau itu hari WAJIB
+                if (status.startsWith('izin')) {
+                    izin++;
+                } else if (status === 'alpa') {
+                    alpa++;
+                }
+            }
+            // Jika statusnya izin/alpa TAPI hari Sunnah, sistem akan mengabaikannya (tidak ditambahkan)
         });
 
-        const total = stats.hadir + stats.izin + stats.alpa;
-        const hadirRate = total > 0 ? (stats.hadir / total) * 100 : 0;
+        // 4. Hitung persentase performa kehadiran
+        const totalValidDays = hadir + izin + alpa;
+        let performance = "100%"; // Default jika belum ada absen
         
-        let performance = 'Belum Ada Data';
-        if (total > 0) {
-            if (hadirRate >= 80) performance = 'Sangat Rajin & Disiplin';
-            else if (hadirRate >= 60) performance = 'Cukup Baik';
-            else performance = 'Kurang Disiplin (Banyak Alpa/Izin)';
+        if (totalValidDays > 0) {
+            performance = Math.round((hadir / totalValidDays) * 100) + "%";
         }
 
         res.status(200).json({
             status: "success",
-            data: { stats, todayStatus, performance, total }
+            data: {
+                stats: { hadir, izin, alpa },
+                todayStatus,
+                performance
+            }
         });
+
     } catch (error) {
         console.error("Get Student Attendance Error:", error.message);
         res.status(500).json({ status: "error", message: error.message });
