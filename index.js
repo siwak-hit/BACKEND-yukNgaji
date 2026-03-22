@@ -16,7 +16,7 @@ const attendanceRouter = require('./router/attendanceRouter');
 // 1. Konfigurasi CORS (Sangat penting agar Frontend di Vercel bisa akses)
 app.use(cors({
     origin: '*', // Jika Frontend sudah di-hosting, ganti '*' menjadi ['https://domain-frontend-kamu.vercel.app', 'http://localhost:5173']
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE','PATCH'],
     credentials: true
 }));
 

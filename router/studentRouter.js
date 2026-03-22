@@ -23,4 +23,6 @@ router.get('/:id/consultations', studentController.getStudentConsultations);
 router.get('/:id/raports', studentController.getStudentRaports);
 router.get('/:id/attendance', studentController.getStudentAttendance);
 
+router.patch('/:id/infaq-can', authMiddleware, studentController.toggleInfaqCan);
+
 module.exports = router;

@@ -195,6 +195,32 @@ const getStudentAttendance = async (req, res) => {
     }
 };
 
+const toggleInfaqCan = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { has_infaq_can } = req.body;
+
+        // Jika kaleng diberikan (true), catat tanggalnya. Jika dikembalikan (false), biarkan tanggal terakhirnya utuh untuk acuan hitung mundur.
+        let updateData = { has_infaq_can };
+        if (has_infaq_can) {
+            updateData.last_can_received_at = new Date().toISOString();
+        }
+
+        const { data, error } = await supabase
+            .from('students')
+            .update(updateData)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
+        res.status(200).json({ status: "success", data });
+    } catch (error) {
+        console.error("Toggle Kaleng Error:", error.message);
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
 
 module.exports = { 
     addStudent, 
@@ -204,5 +230,6 @@ module.exports = {
     removeStudent,
     getStudentRaports, 
     getStudentConsultations,
-    getStudentAttendance
+    getStudentAttendance,
+    toggleInfaqCan
  };
