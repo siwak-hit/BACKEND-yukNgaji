@@ -57,7 +57,6 @@ const updateStudentInfo = async (req, res) => {
     try {
         const { name, grade, age } = req.body;
         
-        // First check if student exists and belongs to teacher
         const existingStudent = await studentModel.getStudentById(req.params.id, req.user.username);
         if (!existingStudent) {
             return res.status(404).json({ status: "error", message: "Siswa tidak ditemukan atau Anda tidak memiliki akses" });
@@ -94,7 +93,7 @@ const getStudentConsultations = async (req, res) => {
             .from('consultations')
             .select('*')
             .eq('student_id', id)
-            .order('created_at', { ascending: false }); // Urutkan dari yang terbaru
+            .order('created_at', { ascending: false });
 
         if (error) {
             console.error("Supabase Error (Consultations):", error.message);
@@ -103,7 +102,7 @@ const getStudentConsultations = async (req, res) => {
 
         res.status(200).json({
             status: "success",
-            data: data || [] // Kembalikan array kosong jika belum ada data
+            data: data || []
         });
     } catch (error) {
         console.error("Get Consultations Error:", error.message);
@@ -120,7 +119,7 @@ const getStudentRaports = async (req, res) => {
             .from('raports')
             .select('*')
             .eq('student_id', id)
-            .order('created_at', { ascending: false }); // Urutkan dari yang terbaru
+            .order('created_at', { ascending: false });
 
         if (error) throw error;
 
@@ -140,7 +139,6 @@ const getStudentAttendance = async (req, res) => {
         const { id } = req.params;
         const username = req.user.username;
 
-        // 1. Ambil semua riwayat absensi yang pernah dibuat oleh guru ini
         const { data: attendances, error } = await supabase
             .from('attendances')
             .select('date, present_students')
@@ -148,53 +146,45 @@ const getStudentAttendance = async (req, res) => {
 
         if (error) throw error;
 
-        // 2. Siapkan variabel perhitungan
         let hadir = 0;
         let izin = 0;
         let alpa = 0;
         let todayStatus = null;
+        const izinDates = [];
+        const alpaDates = [];
         
-        // Aturan Hari Wajib: 1=Senin, 2=Selasa, 3=Rabu, 5=Jumat. (0, 4, 6 = Sunnah)
         const mandatoryDays = [1, 2, 3, 5]; 
         
-        // Ambil tanggal hari ini versi Jakarta (YYYY-MM-DD)
         const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
 
-        // 3. Looping semua data absensi untuk menghitung statistik anak ini
         attendances.forEach(att => {
             const studentAtt = att.present_students[id];
             
-            // Jika anak ini tidak ada di daftar absen hari itu, lewati
             if (!studentAtt) return; 
 
             const status = studentAtt.status;
-            // Ambil angka hari dari tanggal absen (0 = Minggu, 1 = Senin, dst)
             const dow = new Date(att.date).getDay();
             const isMandatory = mandatoryDays.includes(dow);
 
-            // Set status hari ini jika tanggalnya cocok
             if (att.date === todayStr) {
                 todayStatus = status;
             }
 
-            // --- LOGIKA SUNNAH & WAJIB ---
             if (status === 'hadir') {
-                // Jika HADIR, mau hari wajib atau sunnah, TETAP DIHITUNG! (Bonus)
                 hadir++;
             } else if (isMandatory) {
-                // Jika TIDAK HADIR, HANYA dihitung kalau itu hari WAJIB
                 if (status.startsWith('izin')) {
                     izin++;
+                    izinDates.push({ date: att.date, status });
                 } else if (status === 'alpa') {
                     alpa++;
+                    alpaDates.push({ date: att.date, status });
                 }
             }
-            // Jika statusnya izin/alpa TAPI hari Sunnah, sistem akan mengabaikannya (tidak ditambahkan)
         });
 
-        // 4. Hitung persentase performa kehadiran
         const totalValidDays = hadir + izin + alpa;
-        let performance = "100%"; // Default jika belum ada absen
+        let performance = "100%";
         
         if (totalValidDays > 0) {
             performance = Math.round((hadir / totalValidDays) * 100) + "%";
@@ -204,6 +194,7 @@ const getStudentAttendance = async (req, res) => {
             status: "success",
             data: {
                 stats: { hadir, izin, alpa },
+                detail: { izinDates, alpaDates },
                 todayStatus,
                 performance
             }
@@ -220,7 +211,6 @@ const toggleInfaqCan = async (req, res) => {
         const { id } = req.params;
         const { has_infaq_can } = req.body;
 
-        // Jika kaleng diberikan (true), catat tanggalnya. Jika dikembalikan (false), biarkan tanggal terakhirnya utuh untuk acuan hitung mundur.
         let updateData = { has_infaq_can };
         if (has_infaq_can) {
             updateData.last_can_received_at = new Date().toISOString();
@@ -241,6 +231,88 @@ const toggleInfaqCan = async (req, res) => {
     }
 };
 
+// ============================================================
+// GET /api/students/:id/lag-status
+//
+// BARU: Deteksi apakah anak tertinggal dari kelas.
+//
+// Logika:
+//   1. Ambil max week per mapel di tabel questions
+//      → "Current Week Kelas" (berapa pertemuan yang sudah ada soalnya)
+//   2. Ambil max week yang sudah dikerjakan anak di onboarding_results
+//      → "Student Week"
+//   3. Jika Student Week < Current Week Kelas → anak tertinggal
+//
+// Response:
+// {
+//   status: "success",
+//   data: {
+//     tajwid: { classWeek: 7, studentWeek: 5, isLagging: true,  missedWeeks: [6, 7] },
+//     fiqih:  { classWeek: 7, studentWeek: 7, isLagging: false, missedWeeks: [] },
+//     tauhid: { classWeek: 5, studentWeek: 0, isLagging: true,  missedWeeks: [1,2,3,4,5] },
+//   }
+// }
+// ============================================================
+const getStudentLagStatus = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const subjects = ['tajwid', 'fiqih', 'tauhid'];
+
+        // 1. Max week kelas per mapel (dari tabel questions)
+        const { data: classWeekData, error: cwErr } = await supabase
+            .from('questions')
+            .select('subject, week')
+            .in('subject', subjects);
+
+        if (cwErr) throw cwErr;
+
+        // 2. Semua hasil anak untuk mapel-mapel ini
+        const { data: studentWeekData, error: swErr } = await supabase
+            .from('onboarding_results')
+            .select('subject, week')
+            .eq('student_id', id)
+            .in('subject', subjects);
+
+        if (swErr) throw swErr;
+
+        const result = {};
+
+        for (const subject of subjects) {
+            // Max week kelas untuk mapel ini
+            const classWeeks = classWeekData
+                .filter(q => q.subject === subject)
+                .map(q => q.week);
+            const classWeek = classWeeks.length > 0 ? Math.max(...classWeeks) : 0;
+
+            // Max week yang sudah dikerjakan anak
+            const studentWeeks = studentWeekData
+                .filter(r => r.subject === subject)
+                .map(r => r.week);
+            const studentWeek = studentWeeks.length > 0 ? Math.max(...studentWeeks) : 0;
+
+            const isLagging = classWeek > 0 && studentWeek < classWeek;
+
+            // Hitung week mana saja yang terlewat (belum dikerjakan anak)
+            const doneWeeks = new Set(studentWeeks);
+            const missedWeeks = [];
+            for (let w = 1; w <= classWeek; w++) {
+                if (!doneWeeks.has(w)) missedWeeks.push(w);
+            }
+
+            result[subject] = {
+                classWeek,
+                studentWeek,
+                isLagging,
+                missedWeeks
+            };
+        }
+
+        res.status(200).json({ status: "success", data: result });
+    } catch (error) {
+        console.error("Get Student Lag Status Error:", error.message);
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
 
 module.exports = { 
     addStudent, 
@@ -251,5 +323,6 @@ module.exports = {
     getStudentRaports, 
     getStudentConsultations,
     getStudentAttendance,
-    toggleInfaqCan
- };
+    toggleInfaqCan,
+    getStudentLagStatus   // BARU
+};

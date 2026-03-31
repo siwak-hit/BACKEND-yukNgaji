@@ -3,7 +3,7 @@ const supabase = require('../config/supabaseClient');
 // POST /api/raports/generate-note
 const generateNote = (req, res) => {
     try {
-        const { studentName, academic, behavior } = req.body;
+        const { studentName, academic, behavior, checkpointText  } = req.body;
 
         // Fungsi pembantu untuk mengubah huruf menjadi angka (A=4, B=3, C=2, D=1)
         const getScore = (grade) => ({'A': 4, 'B': 3, 'C': 2, 'D': 1}[grade] || 2);
@@ -45,12 +45,72 @@ const generateNote = (req, res) => {
         }
 
         // D. PESAN UNTUK ORANG TUA
-        let pointD = `Kami memohon kerjasama Ayah/Bunda di rumah untuk terus mendampingi ananda mengulang pelajaran dan menanamkan adab islami sehari-hari. Semoga ananda ${studentName} menjadi anak yang sholeh/sholehah, ahli ilmu, dan penyejuk hati keluarga. Aamiin.`;
+        let pointD = `${checkpointText ? `${checkpointText}. ` : ''}Kami memohon kerjasama Ayah/Bunda di rumah untuk terus mendampingi ananda mengulang pelajaran dan menanamkan adab islami sehari-hari. Semoga ananda ${studentName} menjadi anak yang sholeh/sholehah, ahli ilmu, dan penyejuk hati keluarga. Aamiin.`;
 
         // Gabungkan 4 poin tersebut dengan 2 enter (baris baru)
         const finalNote = `${pointA}\n\n${pointB}\n\n${pointC}\n\n${pointD}`;
 
-        res.status(200).json({ status: "success", data: finalNote });
+        // --- BAGIAN BARU: PROFIL PSIKOLOGIS & KELEBIHAN/KEKURANGAN ---
+        // (a) Profil Psikologis berdasarkan kombinasi skor akademik & kepribadian
+        let profilPsikologis = '';
+        const scoreAkhlak    = getScore(behavior.akhlak);
+        const scoreDisiplin  = getScore(behavior.kedisiplinan);
+        const scoreAktif     = getScore(behavior.keaktifan);
+        const scoreTajwid    = getScore(academic.tajwid);
+        const scoreFiqih     = getScore(academic.fiqih);
+        const scoreTauhid    = getScore(academic.tauhid);
+        const scoreQuran     = getScore(academic.quran);
+
+        if (avgAcd >= 3.5 && avgBhv >= 3.5) {
+            profilPsikologis = `${studentName} adalah tipe anak teladan. Secara kognitif, ananda memiliki daya serap yang tinggi terhadap ilmu agama, didukung oleh karakter yang disiplin dan berakhlak mulia. Dalam lingkungan sosial kelas, ananda cenderung menjadi figur positif yang memberi pengaruh baik kepada teman-temannya.`;
+        } else if (avgAcd >= 3 && avgBhv < 2.5) {
+            profilPsikologis = `${studentName} memiliki potensi akademik yang baik dan terlihat aktif menyerap materi pelajaran. Namun, energi sosialnya yang tinggi terkadang menjadikannya kurang fokus pada aturan kelas. Ananda butuh pengarahan yang konsisten agar potensi besarnya dapat tersalurkan secara positif.`;
+        } else if (avgAcd < 2.5 && avgBhv >= 3) {
+            profilPsikologis = `${studentName} adalah anak yang memiliki adab dan karakter yang sangat baik. Ananda dikenal sopan dan mudah diarahkan. Secara akademik, ananda mungkin membutuhkan waktu lebih lama untuk memahami materi, namun dengan ketekunan dan akhlaknya yang baik, insya Allah ananda akan terus berkembang.`;
+        } else if (avgAcd < 2.5 && avgBhv < 2.5) {
+            profilPsikologis = `${studentName} saat ini masih berada di tahap adaptasi. Baik dari sisi penguasaan materi maupun kebiasaan belajar di kelas, ananda masih memerlukan banyak bimbingan dan perhatian ekstra dari guru maupun orang tua. Dukungan yang hangat dan konsisten dari rumah akan sangat menentukan perkembangannya ke depan.`;
+        } else {
+            profilPsikologis = `${studentName} menunjukkan perkembangan yang cukup seimbang antara sisi akademik dan kepribadian. Ananda memiliki potensi yang baik dan mulai menunjukkan konsistensi dalam belajar. Dengan dorongan yang tepat, ananda dapat berkembang menjadi anak yang berprestasi.`;
+        }
+
+        // (b) Kelebihan berdasarkan nilai tertinggi
+        const kelebihanList = [];
+        if (scoreTajwid >= 3) kelebihanList.push('bacaan Tajwid yang baik dan teliti');
+        if (scoreFiqih >= 3)  kelebihanList.push('pemahaman Fiqih yang memadai dalam kehidupan sehari-hari');
+        if (scoreTauhid >= 3) kelebihanList.push('pondasi Tauhid yang kuat');
+        if (scoreQuran >= 3)  kelebihanList.push('kelancaran dalam membaca atau menghafal Al-Quran/Iqro');
+        if (scoreAkhlak >= 3) kelebihanList.push('akhlak dan adab yang baik di lingkungan belajar');
+        if (scoreDisiplin >= 3) kelebihanList.push('kedisiplinan dalam mengikuti kegiatan pengajian');
+        if (scoreAktif >= 3)  kelebihanList.push('keaktifan dan antusias dalam mengikuti pembelajaran');
+
+        const kelebihan = kelebihanList.length > 0
+            ? `Kelebihan ananda yang perlu terus dikembangkan antara lain: ${kelebihanList.join(', ')}.`
+            : `Ananda masih dalam proses menemukan dan mengembangkan potensi terbaiknya. Terus semangat!`;
+
+        // (c) Kekurangan berdasarkan nilai terendah
+        const kekuranganList = [];
+        if (scoreTajwid <= 2) kekuranganList.push('ketelitian dalam hukum-hukum Tajwid perlu lebih banyak latihan');
+        if (scoreFiqih <= 2)  kekuranganList.push('pemahaman Fiqih masih perlu diperdalam dengan contoh nyata sehari-hari');
+        if (scoreTauhid <= 2) kekuranganList.push('pemahaman Tauhid perlu lebih sering diulang dan didiskusikan');
+        if (scoreQuran <= 2)  kekuranganList.push('kelancaran tilawah / hafalan Al-Quran masih perlu ditingkatkan dengan murojaah rutin');
+        if (scoreAkhlak <= 2) kekuranganList.push('masih perlu bimbingan dalam menjaga adab dan sopan santun di kelas');
+        if (scoreDisiplin <= 2) kekuranganList.push('kedisiplinan dalam mengikuti aturan kelas masih perlu dilatih');
+        if (scoreAktif <= 2)  kekuranganList.push('masih terlihat pasif; perlu lebih banyak didorong untuk aktif bertanya dan menjawab');
+
+        const kekurangan = kekuranganList.length > 0
+            ? `Area yang perlu mendapat perhatian dan dukungan ekstra: ${kekuranganList.join('; ')}.`
+            : `Secara keseluruhan ananda sudah menunjukkan perkembangan yang merata di semua aspek. Pertahankan!`;
+
+        res.status(200).json({
+            status: "success",
+            data: finalNote,
+            // Analisis tambahan untuk PDF Halaman 2
+            analisis: {
+                profilPsikologis,
+                kelebihan,
+                kekurangan
+            }
+        });
     } catch (error) {
         console.error("Generate Note Error:", error.message);
         res.status(500).json({ status: "error", message: error.message });

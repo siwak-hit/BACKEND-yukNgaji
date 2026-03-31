@@ -29,7 +29,6 @@ const processOnboardingData = async (student_id, subject, answersArray, notes = 
 
     const generatedTodos = [];
 
-    // Logika Todo Sederhana (Sesuai diskusi terbaru)
     if (score < 60) {
         generatedTodos.push({
             student_id, week: currentWeek, 
@@ -53,10 +52,8 @@ const processOnboardingData = async (student_id, subject, answersArray, notes = 
     return { savedResult, generatedTodos };
 };
 
-// --- FUNGSI BARU UNTUK SAVE JSON DARI BANK SOAL ---
 const saveParsedQuestions = async (req, res) => {
     try {
-        // Hapus difficulty_level dari destructuring utama
         const { subject, questions, week } = req.body; 
 
         if (!subject || !questions || !week) {
@@ -66,11 +63,10 @@ const saveParsedQuestions = async (req, res) => {
             });
         }
 
-        // Ambil difficulty_level dari properti masing-masing soal (q)
         const finalQuestions = questions.map(q => ({
             subject: subject,
             week: parseInt(week),
-            difficulty_level: (q.difficulty_level || 'sedang').toLowerCase(), // <--- Ambil per soal
+            difficulty_level: (q.difficulty_level || 'sedang').toLowerCase(),
             question: q.question,
             options: q.options,
             correct_answer: q.correct_answer.toUpperCase()
@@ -87,8 +83,6 @@ const saveParsedQuestions = async (req, res) => {
         res.status(500).json({ status: "error", message: error.message });
     }
 };
-
-// --- FUNGSI LAINNYA ---
 
 const submitOnboarding = async (req, res) => {
     try {
@@ -124,35 +118,61 @@ const getStudentProgress = async (req, res) => {
     }
 };
 
+// ============================================================
 // GET /api/onboarding/questions/:subject
+//
+// PERUBAHAN: Response sekarang dikelompokkan by subject → week
+// Format baru:
+// {
+//   status: "success",
+//   total_questions: 15,
+//   data: {
+//     tajwid: {
+//       1: [ ...soal minggu 1 ],
+//       2: [ ...soal minggu 2 ],
+//     }
+//   }
+// }
+//
+// Mode Guru (tanpa week & student_id): grouped format
+// Mode Ujian (dengan week & student_id): flat array adaptif (tidak berubah)
+// ============================================================
 const getQuestions = async (req, res) => {
     try {
         const { subject } = req.params;
         const { week, student_id } = req.query;
 
         // ==========================================================
-        // 1. MODE GURU / BANK SOAL (Bypass untuk Riwayat)
-        // Jika tidak ada week dan student_id, berikan SEMUA soal mapel tersebut
+        // 1. MODE GURU — Grouped by subject → week
         // ==========================================================
         if (!week && !student_id) {
             const { data, error } = await supabase
                 .from('questions')
-                .select('id, question, options, correct_answer, week, difficulty_level')
+                .select('id, question, options, correct_answer, week, difficulty_level, subject')
                 .eq('subject', subject)
-                .order('created_at', { ascending: false });
+                .order('week', { ascending: true })
+                .order('created_at', { ascending: true });
 
             if (error) throw error;
+
+            // Kelompokkan per week
+            const grouped = {};
+            data.forEach(q => {
+                const w = q.week;
+                if (!grouped[w]) grouped[w] = [];
+                grouped[w].push(q);
+            });
 
             return res.status(200).json({
                 status: "success",
                 total_questions: data.length,
-                data: data
+                // data: { "1": [...], "2": [...] }
+                data: grouped
             });
         }
 
         // ==========================================================
-        // 2. MODE UJIAN SANTRI (Logic Adaptif)
-        // Jika ada week, maka WAJIB ada student_id juga
+        // 2. MODE UJIAN SANTRI (Logic Adaptif) — tidak berubah
         // ==========================================================
         if (!week || !student_id) {
             return res.status(400).json({ 
@@ -164,7 +184,6 @@ const getQuestions = async (req, res) => {
         const targetWeek = parseInt(week);
         let targetDifficulty = 'sedang'; 
 
-        // LOGIKA ADAPTIF (Sama seperti sebelumnya)
         if (targetWeek > 1) {
             const prevWeek = targetWeek - 1;
             
@@ -194,7 +213,6 @@ const getQuestions = async (req, res) => {
 
         if (qError) throw qError;
 
-        // Acak dan batasi soal
         const shuffledQuestions = questions
             .sort(() => 0.5 - Math.random())
             .slice(0, 5); 
@@ -212,26 +230,134 @@ const getQuestions = async (req, res) => {
     }
 };
 
-// GET /api/onboarding/available-weeks/:subject
+// ============================================================
+// GET /api/onboarding/questions/summary
+//
+// BARU: Deteksi max week + gap (bolong) per mapel
+// Response:
+// {
+//   tajwid: { maxWeek: 7, gaps: [4, 6], allWeeks: [1,2,3,5,7] },
+//   fiqih:  { maxWeek: 3, gaps: [],     allWeeks: [1,2,3] },
+//   tauhid: { maxWeek: 0, gaps: [],     allWeeks: [] }
+// }
+// ============================================================
+const getQuestionsSummary = async (req, res) => {
+    try {
+        const subjects = ['tajwid', 'fiqih', 'tauhid'];
+
+        const { data, error } = await supabase
+            .from('questions')
+            .select('subject, week')
+            .in('subject', subjects);
+
+        if (error) throw error;
+
+        const result = {};
+
+        for (const subject of subjects) {
+            // Ambil semua week unik untuk mapel ini, urutkan ascending
+            const weeks = [...new Set(
+                data
+                    .filter(q => q.subject === subject)
+                    .map(q => q.week)
+            )].sort((a, b) => a - b);
+
+            const maxWeek = weeks.length > 0 ? Math.max(...weeks) : 0;
+
+            // Deteksi gap: angka 1 s.d. maxWeek yang tidak ada di weeks
+            const gaps = [];
+            for (let i = 1; i <= maxWeek; i++) {
+                if (!weeks.includes(i)) gaps.push(i);
+            }
+
+            result[subject] = {
+                maxWeek,
+                gaps,
+                allWeeks: weeks
+            };
+        }
+
+        res.status(200).json({ status: "success", data: result });
+    } catch (error) {
+        console.error("Get Questions Summary Error:", error.message);
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+// ============================================================
+// PUT /api/onboarding/questions/:id
+// Edit satu soal (question, options, correct_answer, difficulty_level)
+// ============================================================
+const updateQuestion = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { question, options, correct_answer, difficulty_level } = req.body;
+
+        if (!question || !options || !correct_answer) {
+            return res.status(400).json({ status: "error", message: "question, options, dan correct_answer wajib diisi." });
+        }
+
+        const { data, error } = await supabase
+            .from('questions')
+            .update({
+                question,
+                options,
+                correct_answer: correct_answer.toUpperCase(),
+                difficulty_level: (difficulty_level || 'sedang').toLowerCase()
+            })
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
+        if (!data) return res.status(404).json({ status: "error", message: "Soal tidak ditemukan." });
+
+        res.status(200).json({ status: "success", data });
+    } catch (error) {
+        console.error("Update Question Error:", error.message);
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+// ============================================================
+// DELETE /api/onboarding/questions/:id
+// Hapus satu soal berdasarkan id
+// ============================================================
+const deleteQuestion = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const { error } = await supabase
+            .from('questions')
+            .delete()
+            .eq('id', id);
+
+        if (error) throw error;
+
+        res.status(200).json({ status: "success", message: "Soal berhasil dihapus." });
+    } catch (error) {
+        console.error("Delete Question Error:", error.message);
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
 const getAvailableWeeks = async (req, res) => {
     try {
         const { subject } = req.params;
 
-        // Ambil data week yang unik dari tabel QUESTIONS
         const { data, error } = await supabase
-            .from('questions') // <--- Arahkan ke tabel master soal
+            .from('questions')
             .select('week')
             .eq('subject', subject)
             .order('week', { ascending: true });
 
         if (error) throw error;
 
-        // Ambil angka week saja dan hilangkan duplikat
         const weeks = [...new Set(data.map(item => item.week))];
 
         res.status(200).json({
             status: "success",
-            data: weeks // Contoh: [1] jika baru ada soal week 1
+            data: weeks
         });
     } catch (error) {
         console.error("Error Get Weeks:", error.message);
@@ -239,7 +365,6 @@ const getAvailableWeeks = async (req, res) => {
     }
 };
 
-// GET /api/onboarding/status?subject=...&week=...
 const getCompletionStatus = async (req, res) => {
     try {
         const { subject, week } = req.query;
@@ -248,16 +373,14 @@ const getCompletionStatus = async (req, res) => {
             return res.status(400).json({ status: "error", message: "Subject dan Week diperlukan" });
         }
 
-        // Ambil data dari tabel onboarding_results (Gunakan nama lengkap sesuai skema kamu)
         const { data, error } = await supabase
-            .from('onboarding_results') // <--- HARUS PERSIS SAMA DENGAN DI DB
+            .from('onboarding_results')
             .select('student_id')
             .eq('subject', subject)
             .eq('week', parseInt(week));
 
         if (error) {
             console.error("Supabase Error:", error.message);
-            // Jika tabel kosong/error, kirim array kosong agar FE tidak crash
             return res.status(200).json({ status: "success", data: [] });
         }
 
@@ -273,7 +396,6 @@ const getCompletionStatus = async (req, res) => {
     }
 };
 
-// POST /api/onboarding/submit-grade
 const submitAndGradeAnswers = async (req, res) => {
     try {
         const { student_id, subject, week, student_answers } = req.body;
@@ -282,28 +404,23 @@ const submitAndGradeAnswers = async (req, res) => {
             return res.status(400).json({ status: "error", message: "Data pengerjaan tidak lengkap." });
         }
 
-        // 1. AMBIL KUNCI JAWABAN DARI DB
-        // Kita hanya mengambil kunci untuk soal-soal yang dikerjakan murid saja
         const questionIds = student_answers.map(ans => ans.question_id);
 
         const { data: dbQuestions, error: qError } = await supabase
             .from('questions')
             .select('id, correct_answer')
-            .in('id', questionIds); // Cuma ambil soal yang ID-nya ada di array
+            .in('id', questionIds);
 
         if (qError) throw qError;
 
-        // 2. KOREKSI OTOMATIS
         let correctCount = 0;
         student_answers.forEach(studentAns => {
             const match = dbQuestions.find(q => q.id === studentAns.question_id);
-            // Bandingkan jawaban murid dengan kunci (dibuat Uppercase agar kebal typo/case)
             if (match && match.correct_answer.toUpperCase() === studentAns.answer.toUpperCase()) {
                 correctCount++;
             }
         });
 
-        // 3. HITUNG SKOR & KATEGORI
         const totalSoal = student_answers.length;
         const score = totalSoal > 0 ? Math.round((correctCount / totalSoal) * 100) : 0;
         
@@ -311,11 +428,8 @@ const submitAndGradeAnswers = async (req, res) => {
         if (score >= 80) category = 'A';
         else if (score >= 60) category = 'B';
 
-        console.log(`Santri ${student_id} mendapat skor ${score} (${category}) di ${subject} Week ${week}`);
-
-        // 4. SIMPAN KE TABEL onboarding_results
         const { error: resultError } = await supabase
-            .from('onboarding_results') // Sesuai dengan skema kamu
+            .from('onboarding_results')
             .insert([{
                 student_id,
                 subject,
@@ -327,7 +441,6 @@ const submitAndGradeAnswers = async (req, res) => {
 
         if (resultError) throw resultError;
 
-        // 5. AUTO-GENERATE TODO BERDASARKAN SKOR
         const generatedTodos = [];
         if (score < 60) {
             generatedTodos.push({
@@ -346,7 +459,6 @@ const submitAndGradeAnswers = async (req, res) => {
                 week: parseInt(week)
             });
         } else {
-            // Jika nilainya A (80+), kasih todo pengayaan
             generatedTodos.push({
                 student_id,
                 title: `Pengayaan ${subject.toUpperCase()}`,
@@ -358,13 +470,12 @@ const submitAndGradeAnswers = async (req, res) => {
 
         if (generatedTodos.length > 0) {
             const { error: todoError } = await supabase
-                .from('todos') // Sesuai dengan skema kamu
+                .from('todos')
                 .insert(generatedTodos);
                 
             if (todoError) console.error("Gagal buat Todo:", todoError.message);
         }
 
-        // 6. KIRIM RESPONSE KE FE (Tanpa menampilkan skor)
         res.status(201).json({ 
             status: "success", 
             message: "Jawaban berhasil dikirim dan disembunyikan dalam sistem." 
@@ -376,13 +487,15 @@ const submitAndGradeAnswers = async (req, res) => {
     }
 };
 
-// Jangan lupa tambahkan getAvailableWeeks ke module.exports
 module.exports = { 
     saveParsedQuestions, 
     submitOnboarding, 
     getStudentProgress, 
     getQuestions,
+    getQuestionsSummary,   // BARU
+    updateQuestion,        // BARU
+    deleteQuestion,        // BARU
     getCompletionStatus,
     submitAndGradeAnswers,
-    getAvailableWeeks // <--- Tambahkan ini
+    getAvailableWeeks
 };

@@ -4,6 +4,14 @@ const studentController = require('../controller/studentController');
 const onboardingController = require('../controller/onboardingController');
 const todoController = require('../controller/todoController');
 const authMiddleware = require('../middleware/authMiddleware');
+const { getStudentLagStatus } = require('../controller/studentController');
+const {
+    logMemorization,
+    setCheckpoint,
+    updateCheckpoint,
+    resetCheckpoint,
+    getMemorizationLogs,
+} = require('../controller/memorizationController');
 
 router.use(authMiddleware);
 
@@ -24,5 +32,17 @@ router.get('/:id/raports', studentController.getStudentRaports);
 router.get('/:id/attendance', studentController.getStudentAttendance);
 
 router.patch('/:id/infaq-can', authMiddleware, studentController.toggleInfaqCan);
+
+// Hafalan log
+router.post('/:id/memorization', authMiddleware, logMemorization);
+
+// Checkpoint student
+router.post('/:id/checkpoint',   authMiddleware, setCheckpoint);    // onboarding
+router.put('/:id/checkpoint',    authMiddleware, updateCheckpoint);  // edit manual
+router.delete('/:id/checkpoint', authMiddleware, resetCheckpoint);   // reset
+
+// Riwayat log (opsional)
+router.get('/students/:id/memorization-logs',        authMiddleware, getMemorizationLogs);
+router.get('/:id/lag-status', authMiddleware, getStudentLagStatus);
 
 module.exports = router;

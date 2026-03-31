@@ -5,6 +5,12 @@ const upload = multer({ dest: 'uploads/' });
 const onboardingController = require('../controller/onboardingController');
 const uploadController = require('../controller/uploadController'); // File yang baru diupdate
 const authMiddleware = require('../middleware/authMiddleware');
+const { 
+    getQuestionsSummary,
+    updateQuestion,
+    deleteQuestion,
+    // ... sisanya sudah ada
+} = require('../controller/onboardingController');
 
 router.use(authMiddleware);
 
@@ -15,6 +21,9 @@ router.post('/', onboardingController.submitOnboarding);
 router.post('/upload-template', onboardingController.saveParsedQuestions);
 router.post('/submit-grade', onboardingController.submitAndGradeAnswers);
 
+router.get('/questions/summary',        authMiddleware, getQuestionsSummary); // HARUS sebelum /:subject
+router.put('/questions/:id',            authMiddleware, updateQuestion);
+router.delete('/questions/:id',         authMiddleware, deleteQuestion);
 
 router.get('/questions/:subject', onboardingController.getQuestions);
 router.get('/available-weeks/:subject', onboardingController.getAvailableWeeks);
