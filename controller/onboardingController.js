@@ -99,21 +99,26 @@ const submitOnboarding = async (req, res) => {
 
 const getStudentProgress = async (req, res) => {
     try {
-        const studentId = req.params.id;
+        const studentId = req.params.id.trim(); // Pastikan ID bersih
         const progressData = await onboardingModel.getStudentProgress(studentId);
 
         if (!progressData || progressData.length === 0) {
-            return res.status(200).json({ status: "success", data: null });
+            return res.status(200).json({ 
+                status: "success", 
+                data: { tajwid: [], fiqih: [], tauhid: [] } 
+            });
         }
 
+        // PERBAIKAN: Tambahkan .trim() sebelum .toLowerCase()
         const groupedProgress = {
-            tajwid: progressData.filter(item => item.subject === 'tajwid'),
-            fiqih: progressData.filter(item => item.subject === 'fiqih'),
-            tauhid: progressData.filter(item => item.subject === 'tauhid')
+            tajwid: progressData.filter(item => item.subject && item.subject.trim().toLowerCase() === 'tajwid'),
+            fiqih: progressData.filter(item => item.subject && item.subject.trim().toLowerCase() === 'fiqih'),
+            tauhid: progressData.filter(item => item.subject && item.subject.trim().toLowerCase() === 'tauhid')
         };
 
         res.status(200).json({ status: "success", data: groupedProgress });
     } catch (error) {
+        console.error("Get Progress Error:", error.message);
         res.status(500).json({ status: "error", message: error.message });
     }
 };
@@ -166,13 +171,12 @@ const getQuestions = async (req, res) => {
             return res.status(200).json({
                 status: "success",
                 total_questions: data.length,
-                // data: { "1": [...], "2": [...] }
                 data: grouped
             });
         }
 
         // ==========================================================
-        // 2. MODE UJIAN SANTRI (Logic Adaptif) — tidak berubah
+        // 2. MODE UJIAN SANTRI (Logic Adaptif yang Aman)
         // ==========================================================
         if (!week || !student_id) {
             return res.status(400).json({ 
@@ -184,6 +188,7 @@ const getQuestions = async (req, res) => {
         const targetWeek = parseInt(week);
         let targetDifficulty = 'sedang'; 
 
+        // Tentukan Level Adaptif
         if (targetWeek > 1) {
             const prevWeek = targetWeek - 1;
             
@@ -204,24 +209,31 @@ const getQuestions = async (req, res) => {
             }
         }
 
-        const { data: questions, error: qError } = await supabase
+        // AMBIL SEMUA SOAL di minggu tersebut (Tanpa di-filter level dulu)
+        const { data: allQuestions, error: qError } = await supabase
             .from('questions')
-            .select('id, question, options, correct_answer')
+            .select('id, question, options, correct_answer, difficulty_level')
             .eq('subject', subject)
-            .eq('week', targetWeek)
-            .eq('difficulty_level', targetDifficulty);
+            .eq('week', targetWeek);
 
         if (qError) throw qError;
 
-        const shuffledQuestions = questions
-            .sort(() => 0.5 - Math.random())
-            .slice(0, 5); 
+        // LOGIKA ADAPTIF AMAN (Fallback Mechanism)
+        // 1. Saring dulu khusus untuk level yang ditargetkan AI
+        let finalQuestions = allQuestions.filter(q => q.difficulty_level === targetDifficulty);
 
+        // 2. Jika soal di level tersebut KURANG DARI 3, campurkan dengan semua soal yang ada di minggu itu
+        // Supaya anak tidak pernah kehabisan soal (Frontend yang akan mengacak & memotong 3)
+        if (finalQuestions.length < 3) {
+            finalQuestions = allQuestions; 
+        }
+
+        // Kirim raw data ke frontend (Tidak perlu Math.random/slice di backend lagi)
         res.status(200).json({
             status: "success",
             adaptive_level: targetDifficulty,
-            total_questions: shuffledQuestions.length,
-            data: shuffledQuestions
+            total_questions: finalQuestions.length,
+            data: finalQuestions 
         });
 
     } catch (error) {
