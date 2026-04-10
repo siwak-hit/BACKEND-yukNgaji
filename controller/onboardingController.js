@@ -142,6 +142,9 @@ const getStudentProgress = async (req, res) => {
 // Mode Guru (tanpa week & student_id): grouped format
 // Mode Ujian (dengan week & student_id): flat array adaptif (tidak berubah)
 // ============================================================
+// ============================================================
+// GET /api/onboarding/questions/:subject
+// ============================================================
 const getQuestions = async (req, res) => {
     try {
         const { subject } = req.params;
@@ -160,7 +163,6 @@ const getQuestions = async (req, res) => {
 
             if (error) throw error;
 
-            // Kelompokkan per week
             const grouped = {};
             data.forEach(q => {
                 const w = q.week;
@@ -176,7 +178,7 @@ const getQuestions = async (req, res) => {
         }
 
         // ==========================================================
-        // 2. MODE UJIAN SANTRI (Logic Adaptif yang Aman)
+        // 2. MODE UJIAN SANTRI (Logic Adaptif yang Sempurna)
         // ==========================================================
         if (!week || !student_id) {
             return res.status(400).json({ 
@@ -186,10 +188,11 @@ const getQuestions = async (req, res) => {
         }
 
         const targetWeek = parseInt(week);
-        let targetDifficulty = 'sedang'; 
+        let targetDifficulty = null; // PERBAIKAN: Kosongkan dulu untuk pertemuan 1
 
-        // Tentukan Level Adaptif
+        // Tentukan Level Adaptif HANYA jika Pertemuan > 1
         if (targetWeek > 1) {
+            targetDifficulty = 'sedang'; // Default aman jika tidak ada riwayat
             const prevWeek = targetWeek - 1;
             
             const { data: pastResults, error: pastError } = await supabase
@@ -209,7 +212,7 @@ const getQuestions = async (req, res) => {
             }
         }
 
-        // AMBIL SEMUA SOAL di minggu tersebut (Tanpa di-filter level dulu)
+        // AMBIL SEMUA SOAL di minggu tersebut dari Database
         const { data: allQuestions, error: qError } = await supabase
             .from('questions')
             .select('id, question, options, correct_answer, difficulty_level')
@@ -218,20 +221,21 @@ const getQuestions = async (req, res) => {
 
         if (qError) throw qError;
 
-        // LOGIKA ADAPTIF AMAN (Fallback Mechanism)
-        // 1. Saring dulu khusus untuk level yang ditargetkan AI
-        let finalQuestions = allQuestions.filter(q => q.difficulty_level === targetDifficulty);
+        let finalQuestions = allQuestions; // Default: Semua soal dikirim untuk Pertemuan 1
 
-        // 2. Jika soal di level tersebut KURANG DARI 3, campurkan dengan semua soal yang ada di minggu itu
-        // Supaya anak tidak pernah kehabisan soal (Frontend yang akan mengacak & memotong 3)
-        if (finalQuestions.length < 3) {
-            finalQuestions = allQuestions; 
+        // Saring soal HANYA jika targetDifficulty terisi (Pertemuan 2 ke atas)
+        if (targetDifficulty) {
+            finalQuestions = allQuestions.filter(q => q.difficulty_level === targetDifficulty);
+
+            // Fallback: Jika soal di level tsb kurang dari 3, kembalikan ke campuran semua soal
+            if (finalQuestions.length < 3) {
+                finalQuestions = allQuestions; 
+            }
         }
 
-        // Kirim raw data ke frontend (Tidak perlu Math.random/slice di backend lagi)
         res.status(200).json({
             status: "success",
-            adaptive_level: targetDifficulty,
+            adaptive_level: targetDifficulty || 'mix_all', // mix_all untuk pertemuan 1
             total_questions: finalQuestions.length,
             data: finalQuestions 
         });
