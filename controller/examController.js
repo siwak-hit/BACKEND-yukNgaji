@@ -89,38 +89,67 @@ const removeExam = async (req, res) => {
     }
 };
 
-// 6. Menerima Hasil Ujian dari Siswa
+// 6. Menerima Hasil Ujian dari Siswa (Beserta Foto Bukti)
 const submitExamResult = async (req, res) => {
     try {
         const examId = req.params.id;
-        const { student_id, subject, score } = req.body;
+        const { student_id, subject, score, capture_base64 } = req.body;
 
         if (!student_id || score === undefined) {
             return res.status(400).json({ status: "error", message: "Data tidak lengkap." });
         }
 
-        // Cek apakah siswa sudah pernah mengerjakan ujian ini (Gunakan 'supabase', BUKAN 'examModel.supabase')
+        let capture_url = null;
+
+        // PROSES UPLOAD FOTO KAMERA (Jika Ada)
+        if (capture_base64) {
+            try {
+                // Bersihkan header base64
+                const base64Data = capture_base64.replace(/^data:image\/\w+;base64,/, "");
+                const buffer = Buffer.from(base64Data, 'base64');
+                const fileName = `capture_${examId}_${student_id}_${Date.now()}.jpg`;
+
+                // Upload ke bucket 'exam_captures'
+                const { data: uploadData, error: uploadError } = await supabase.storage
+                    .from('exam_captures')
+                    .upload(fileName, buffer, {
+                        contentType: 'image/jpeg',
+                        upsert: true
+                    });
+
+                if (!uploadError) {
+                    const { data: publicUrlData } = supabase.storage.from('exam_captures').getPublicUrl(fileName);
+                    capture_url = publicUrlData.publicUrl;
+                }
+            } catch (err) {
+                console.error("Gagal memproses foto kamera:", err);
+            }
+        }
+
+        // Cek apakah siswa sudah pernah mengerjakan ujian ini
         const { data: existing } = await supabase
             .from('exam_results')
-            .select('id')
+            .select('id, capture_url')
             .eq('exam_id', examId)
             .eq('student_id', student_id)
             .single();
 
         if (existing) {
-            // Jika sudah ada, update nilainya (misal remedial)
             await supabase
                 .from('exam_results')
-                .update({ score: score, created_at: new Date().toISOString() })
+                .update({ 
+                    score: score, 
+                    capture_url: capture_url || existing.capture_url, // Timpa foto jika ada foto baru
+                    created_at: new Date().toISOString() 
+                })
                 .eq('id', existing.id);
         } else {
-            // Jika belum ada, insert baru
             await supabase
                 .from('exam_results')
-                .insert([{ student_id, exam_id: examId, subject, score }]);
+                .insert([{ student_id, exam_id: examId, subject, score, capture_url }]);
         }
 
-        res.status(200).json({ status: "success", message: "Nilai ujian berhasil disimpan ke database." });
+        res.status(200).json({ status: "success", message: "Nilai dan foto ujian berhasil disimpan." });
     } catch (error) {
         res.status(500).json({ status: "error", message: error.message });
     }

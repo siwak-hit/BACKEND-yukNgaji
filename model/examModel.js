@@ -1,41 +1,34 @@
 const supabase = require('../config/supabaseClient');
 
-// Simpan / Buat Ujian Baru
 const createExam = async (examData) => {
-    const { data, error } = await supabase
-        .from('exams')
-        .insert([examData])
-        .select()
-        .single();
+    const { data, error } = await supabase.from('exams').insert([examData]).select().single();
     if (error) throw error;
     return data;
 };
 
-// Ambil semua daftar Ujian
+// [OPTIMASI] Hanya ambil data inti untuk list tabel (Tanpa narik semua text panjang)
 const getExamsByTeacher = async (username) => {
     const { data, error } = await supabase
         .from('exams')
-        .select('*')
+        .select('id, title, subject, duration_minutes, is_active, created_at') 
         .eq('created_by', username)
         .order('created_at', { ascending: false });
     if (error) throw error;
     return data;
 };
 
-// Ambil detail ujian sekaligus daftar soal-soalnya
+// [OPTIMASI] Ambil detail ujian sekaligus daftar soal-soalnya secara spesifik
 const getExamDetail = async (examId) => {
-    // Ambil info ujian
     const { data: exam, error: examErr } = await supabase
         .from('exams')
-        .select('*')
+        .select('id, title, subject, duration_minutes, is_active') 
         .eq('id', examId)
         .single();
     if (examErr) throw examErr;
 
-    // Ambil daftar soalnya
     const { data: questions, error: qErr } = await supabase
         .from('exam_questions')
-        .select('*')
+        .select('id, question, options, correct_answer, hint, image_url, difficulty_level')
         .eq('exam_id', examId)
         .order('created_at', { ascending: true });
     if (qErr) throw qErr;
@@ -43,39 +36,20 @@ const getExamDetail = async (examId) => {
     return { ...exam, questions: questions || [] };
 };
 
-// Update status atau pengaturan Ujian
 const updateExam = async (examId, updateData) => {
-    const { data, error } = await supabase
-        .from('exams')
-        .update(updateData)
-        .eq('id', examId)
-        .select()
-        .single();
+    const { data, error } = await supabase.from('exams').update(updateData).eq('id', examId).select('id').single();
     if (error) throw error;
     return data;
 };
 
-// Simpan banyak soal sekaligus (Bulk Upsert / Insert)
 const saveExamQuestions = async (examId, questionsArray) => {
-    // Hapus soal lama untuk memastikan sinkronisasi sempurna dengan frontend builder
     await supabase.from('exam_questions').delete().eq('exam_id', examId);
-
     if (questionsArray && questionsArray.length > 0) {
-        // Beri exam_id ke setiap soal
         const formattedQuestions = questionsArray.map(q => ({
-            exam_id: examId,
-            question: q.question,
-            options: q.options,
-            correct_answer: q.correct_answer,
-            hint: q.hint || null,
-            image_url: q.image_url || null
+            exam_id: examId, question: q.question, options: q.options, correct_answer: q.correct_answer,
+            hint: q.hint || null, image_url: q.image_url || null, difficulty_level: q.difficulty_level || 'sedang'
         }));
-
-        const { data, error } = await supabase
-            .from('exam_questions')
-            .insert(formattedQuestions)
-            .select();
-        
+        const { data, error } = await supabase.from('exam_questions').insert(formattedQuestions).select('id');
         if (error) throw error;
         return data;
     }
@@ -88,11 +62,4 @@ const deleteExam = async (examId) => {
     return true;
 };
 
-module.exports = {
-    createExam,
-    getExamsByTeacher,
-    getExamDetail,
-    updateExam,
-    saveExamQuestions,
-    deleteExam
-};
+module.exports = { createExam, getExamsByTeacher, getExamDetail, updateExam, saveExamQuestions, deleteExam };
