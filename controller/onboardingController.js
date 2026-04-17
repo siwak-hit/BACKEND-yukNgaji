@@ -191,7 +191,33 @@ const submitAndGradeAnswers = async (req, res) => {
 
 // 9. ENDPOINT LEGACY (Menjaga agar Router tidak error jika memanggil fungsi ini)
 const submitOnboarding = async (req, res) => res.status(200).json({ status: "success" });
-const getStudentProgress = async (req, res) => res.status(200).json({ status: "success", data: [] });
+// 9. AMBIL DATA PROGRESS UNTUK GRAFIK SISWA
+const getStudentProgress = async (req, res) => {
+    try {
+        const studentId = req.params.id;
+        
+        // Ambil riwayat nilai siswa
+        const { data: progressData, error } = await supabase
+            .from('onboarding_results')
+            .select('id, week, subject, score')
+            .eq('student_id', studentId)
+            .order('week', { ascending: true });
+
+        if (error) throw error;
+
+        // Kelompokkan data per mapel agar Frontend (Chart.js) bisa membacanya
+        const groupedProgress = {
+            tajwid: (progressData || []).filter(item => item.subject && item.subject.trim().toLowerCase() === 'tajwid'),
+            fiqih: (progressData || []).filter(item => item.subject && item.subject.trim().toLowerCase() === 'fiqih'),
+            tauhid: (progressData || []).filter(item => item.subject && item.subject.trim().toLowerCase() === 'tauhid')
+        };
+
+        res.status(200).json({ status: "success", data: groupedProgress });
+    } catch (error) {
+        console.error("Get Progress Error:", error.message);
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
 
 module.exports = {
     saveParsedQuestions,

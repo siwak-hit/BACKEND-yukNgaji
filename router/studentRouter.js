@@ -27,7 +27,7 @@ router.get('/:id/progress', onboardingController.getStudentProgress);
 router.get('/:id/todos', todoController.getStudentTodos);
 router.get('/:id/consultations', studentController.getStudentConsultations);
 
-// Raport & Kehadiran
+// Raports & Attendance
 router.get('/:id/raports', studentController.getStudentRaports);
 router.get('/:id/attendance', studentController.getStudentAttendance);
 
@@ -41,8 +41,10 @@ router.post('/:id/checkpoint',   authMiddleware, setCheckpoint);    // onboardin
 router.put('/:id/checkpoint',    authMiddleware, updateCheckpoint);  // edit manual
 router.delete('/:id/checkpoint', authMiddleware, resetCheckpoint);   // reset
 
-// [PERBAIKAN]: Menghapus "/students" agar rutenya tidak bertumpuk dengan index.js
+// [PERBAIKAN KUNCI 1]: Pastikan TIDAK ADA kata "/students" di depan, karena sudah otomatis masuk dari index.js
 router.get('/:id/memorization-logs', authMiddleware, getMemorizationLogs);
-router.get('/:id/lag', authMiddleware, getStudentLagStatus);
+
+// [PERBAIKAN KUNCI 2]: Pastikan rutenya benar-benar '/:id/lag-status' agar terhubung ke Frontend
+router.get('/:id/lag-status', authMiddleware, getStudentLagStatus);
 
 module.exports = router;
