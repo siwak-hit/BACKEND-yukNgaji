@@ -178,7 +178,7 @@ const getQuestions = async (req, res) => {
         }
 
         // ==========================================================
-        // 2. MODE UJIAN SANTRI (Logic Adaptif yang Sempurna)
+        // 2. MODE UJIAN Siswa / Anak (Logic Adaptif yang Sempurna)
         // ==========================================================
         if (!week || !student_id) {
             return res.status(400).json({ 

@@ -6,7 +6,7 @@ const createStudent = async (studentData) => {
     return data;
 };
 
-// [OPTIMASI] List santri tidak butuh tanggal buat dll
+// [OPTIMASI] List Siswa / Anak tidak butuh tanggal buat dll
 const getStudentsByTeacher = async (teacherUsername) => {
     const { data, error } = await supabase
         .from('students')

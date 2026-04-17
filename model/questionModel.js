@@ -6,17 +6,17 @@ const insertQuestions = async (questionsArray) => {
     const { data, error } = await supabase
         .from('questions')
         .insert(questionsArray)
-        .select();
+        .select('id'); // [OPTIMASI] Hanya kembalikan ID untuk menghemat bandwidth
         
     if (error) throw error;
     return data;
 };
 
-// Opsional: untuk FE nampilin soal ke siswa
+// Opsional: untuk FE nampilin soal ke siswa (di consultations/fill.astro)
 const getQuestionsBySubject = async (subject) => {
     const { data, error } = await supabase
         .from('questions')
-        .select('id, question, options') // Sengaja gak return kunci jawaban biar gak dicontek via Inspect Element FE
+        .select('id, question, options, type') // [OPTIMASI] Tambahkan 'type', dan TETAP SEMBUNYIKAN correct_answer
         .eq('subject', subject);
         
     if (error) throw error;

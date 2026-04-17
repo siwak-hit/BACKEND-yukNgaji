@@ -27,7 +27,7 @@ router.get('/:id/progress', onboardingController.getStudentProgress);
 router.get('/:id/todos', todoController.getStudentTodos);
 router.get('/:id/consultations', studentController.getStudentConsultations);
 
-// Tambahkan di bawah rute consultations yang kemarin dibuat
+// Raport & Kehadiran
 router.get('/:id/raports', studentController.getStudentRaports);
 router.get('/:id/attendance', studentController.getStudentAttendance);
 
@@ -41,8 +41,8 @@ router.post('/:id/checkpoint',   authMiddleware, setCheckpoint);    // onboardin
 router.put('/:id/checkpoint',    authMiddleware, updateCheckpoint);  // edit manual
 router.delete('/:id/checkpoint', authMiddleware, resetCheckpoint);   // reset
 
-// Riwayat log (opsional)
-router.get('/students/:id/memorization-logs',        authMiddleware, getMemorizationLogs);
-router.get('/:id/lag-status', authMiddleware, getStudentLagStatus);
+// [PERBAIKAN]: Menghapus "/students" agar rutenya tidak bertumpuk dengan index.js
+router.get('/:id/memorization-logs', authMiddleware, getMemorizationLogs);
+router.get('/:id/lag', authMiddleware, getStudentLagStatus);
 
 module.exports = router;
