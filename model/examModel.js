@@ -17,7 +17,7 @@ const getExamsByTeacher = async (username) => {
     return data;
 };
 
-// [OPTIMASI] Ambil detail ujian sekaligus daftar soal-soalnya secara spesifik
+// [PERBAIKAN] Hapus difficulty_level dari Select karena tidak ada di schema exam_questions
 const getExamDetail = async (examId) => {
     const { data: exam, error: examErr } = await supabase
         .from('exams')
@@ -28,7 +28,7 @@ const getExamDetail = async (examId) => {
 
     const { data: questions, error: qErr } = await supabase
         .from('exam_questions')
-        .select('id, question, options, correct_answer, hint, image_url, difficulty_level')
+        .select('id, question, options, correct_answer, hint, image_url') 
         .eq('exam_id', examId)
         .order('created_at', { ascending: true });
     if (qErr) throw qErr;
@@ -45,9 +45,14 @@ const updateExam = async (examId, updateData) => {
 const saveExamQuestions = async (examId, questionsArray) => {
     await supabase.from('exam_questions').delete().eq('exam_id', examId);
     if (questionsArray && questionsArray.length > 0) {
+        // [PERBAIKAN] Hapus difficulty_level dari proses insert
         const formattedQuestions = questionsArray.map(q => ({
-            exam_id: examId, question: q.question, options: q.options, correct_answer: q.correct_answer,
-            hint: q.hint || null, image_url: q.image_url || null, difficulty_level: q.difficulty_level || 'sedang'
+            exam_id: examId, 
+            question: q.question, 
+            options: q.options, 
+            correct_answer: q.correct_answer,
+            hint: q.hint || null, 
+            image_url: q.image_url || null
         }));
         const { data, error } = await supabase.from('exam_questions').insert(formattedQuestions).select('id');
         if (error) throw error;

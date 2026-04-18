@@ -40,7 +40,9 @@ const getExamDetails = async (req, res) => {
         const examDetail = await examModel.getExamDetail(examId);
         res.status(200).json({ status: "success", data: examDetail });
     } catch (error) {
-        res.status(500).json({ status: "error", message: "Gagal mengambil data ujian." });
+        console.error("Get Exam Detail Error:", error);
+        // [PERBAIKAN] Tampilkan error.message aslinya agar gampang di-debug!
+        res.status(500).json({ status: "error", message: error.message || "Gagal mengambil data ujian." });
     }
 };
 
@@ -75,6 +77,7 @@ const saveAndPublishExam = async (req, res) => {
         });
 
     } catch (error) {
+        console.error("Save & Publish Error:", error);
         res.status(500).json({ status: "error", message: error.message });
     }
 };
@@ -119,7 +122,7 @@ const submitExamResult = async (req, res) => {
 
                 if (!uploadError) {
                     const { data: publicUrlData } = supabase.storage.from('exam_captures').getPublicUrl(fileName);
-                    capture_url = publicUrlData.publicUrl;
+                    if (publicUrlData) capture_url = publicUrlData.publicUrl;
                 }
             } catch (err) {
                 console.error("Gagal memproses foto kamera:", err);
@@ -158,7 +161,6 @@ const submitExamResult = async (req, res) => {
 // 7. Ambil Nilai Ujian Siswa Spesifik
 const getStudentExamResults = async (req, res) => {
     try {
-        // Gunakan 'supabase', BUKAN 'examModel.supabase'
         const { data, error } = await supabase
             .from('exam_results')
             .select('*')
