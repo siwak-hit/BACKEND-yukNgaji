@@ -1,4 +1,5 @@
 const supabase = require('../config/supabaseClient');
+const onboardingModel = require('../model/onboardingModel');
 
 // 1. TAMBAH BANYAK SOAL SEKALIGUS (Dari Upload TXT atau Input Manual)
 const saveParsedQuestions = async (req, res) => {
@@ -180,7 +181,7 @@ const submitAndGradeAnswers = async (req, res) => {
         if (existing) {
             await supabase.from('onboarding_results').update({ score, category }).eq('id', existing.id);
         } else {
-            await supabase.from('onboarding_results').insert([{ student_id, subject, week, score, category }]);
+            await supabase.from('onboarding_results').insert([{ student_id, subject, week, score, category, student_answers }]);
         }
 
         res.status(200).json({ status: "success", score, category });
@@ -219,6 +220,23 @@ const getStudentProgress = async (req, res) => {
     }
 };
 
+const getReviewData = async (req, res) => {
+    try {
+        const { id, subject, week } = req.params;
+        
+        if (!id || !subject || !week) {
+            return res.status(400).json({ status: "error", message: "Parameter tidak lengkap." });
+        }
+
+        const data = await onboardingModel.getStudentReview(id, subject, parseInt(week));
+        
+        res.status(200).json({ status: "success", data });
+    } catch (error) {
+        console.error("Get Review Error:", error.message);
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
 module.exports = {
     saveParsedQuestions,
     updateQuestion,
@@ -229,5 +247,6 @@ module.exports = {
     getCompletionStatus,
     submitAndGradeAnswers,
     submitOnboarding,
-    getStudentProgress
+    getStudentProgress,
+    getReviewData
 };

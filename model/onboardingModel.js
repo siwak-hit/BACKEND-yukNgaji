@@ -36,4 +36,28 @@ const getStudentProgressBySubject = async (studentId, subject) => {
     return data;
 };
 
-module.exports = { getStudentProgress, saveResult, getAllOnboardingResults, getStudentProgressBySubject };
+const getStudentReview = async (studentId, subject, week) => {
+    // 1. Ambil data hasil ujian siswa (termasuk student_answers)
+    const { data: resultData, error: resultErr } = await supabase
+        .from('onboarding_results')
+        .select('score, category, student_answers, notes')
+        .eq('student_id', studentId)
+        .eq('subject', subject)
+        .eq('week', week)
+        .single();
+        
+    if (resultErr) throw resultErr;
+
+    // 2. Ambil soal aslinya untuk disandingkan
+    const { data: questionsData, error: qErr } = await supabase
+        .from('questions')
+        .select('id, question, options, correct_answer, type')
+        .eq('subject', subject)
+        .eq('week', week);
+
+    if (qErr) throw qErr;
+
+    return { result: resultData, questions: questionsData };
+};
+
+module.exports = { getStudentProgress, saveResult, getAllOnboardingResults, getStudentProgressBySubject, getStudentReview };

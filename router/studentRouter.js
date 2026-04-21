@@ -26,6 +26,7 @@ router.delete('/:id', studentController.removeStudent);
 router.get('/:id/progress', onboardingController.getStudentProgress);
 router.get('/:id/todos', todoController.getStudentTodos);
 router.get('/:id/consultations', studentController.getStudentConsultations);
+router.get('/:id/review/:subject/:week', authMiddleware, onboardingController.getReviewData);
 
 // Raports & Attendance
 router.get('/:id/raports', studentController.getStudentRaports);
