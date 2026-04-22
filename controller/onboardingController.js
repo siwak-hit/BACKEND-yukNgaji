@@ -17,7 +17,8 @@ const saveParsedQuestions = async (req, res) => {
             question: q.question,
             options: q.options,
             correct_answer: q.correct_answer,
-            difficulty_level: q.difficulty_level || 'sedang'
+            difficulty_level: q.difficulty_level || 'sedang',
+            image_url: q.image_url ? q.image_url.trim() : null
         }));
 
         const { data, error } = await supabase.from('questions').insert(formattedQuestions).select('id');
@@ -25,6 +26,7 @@ const saveParsedQuestions = async (req, res) => {
 
         res.status(201).json({ status: "success", data });
     } catch (error) {
+        console.error("Save Questions Error:", error.message);
         res.status(500).json({ status: "error", message: error.message });
     }
 };
@@ -36,6 +38,8 @@ const updateQuestion = async (req, res) => {
         // [PERBAIKAN KUNCI]: Pastikan 'type' diambil dari body request
         const { type, question, options, correct_answer, difficulty_level } = req.body;
 
+        const { image_url } = req.body;
+
         const { data, error } = await supabase
             .from('questions')
             .update({ 
@@ -43,7 +47,8 @@ const updateQuestion = async (req, res) => {
                 question, 
                 options, 
                 correct_answer, 
-                difficulty_level 
+                difficulty_level,
+                image_url: image_url ? image_url.trim() : null
             })
             .eq('id', id)
             .select('id')
@@ -74,9 +79,9 @@ const getQuestions = async (req, res) => {
         const { subject } = req.params;
         const { week } = req.query; 
 
-        // [PERBAIKAN KUNCI]: Lakukan "SELECT type" agar Frontend tahu jenis soalnya!
+        // [PERBAIKAN KUNCI]: Tambahkan image_url di dalam select!
         let query = supabase.from('questions')
-            .select('id, subject, week, question, options, correct_answer, difficulty_level, type')
+            .select('id, subject, week, question, options, correct_answer, difficulty_level, type, image_url')
             .eq('subject', subject)
             .order('week', { ascending: true });
 
@@ -157,42 +162,65 @@ const getCompletionStatus = async (req, res) => {
 const submitAndGradeAnswers = async (req, res) => {
     try {
         const { student_id, subject, week, student_answers } = req.body;
-        if (!student_id || !subject || !week) return res.status(400).json({ status: "error", message: "Data tidak lengkap" });
 
-        const { data: questions, error: qErr } = await supabase.from('questions').select('id, correct_answer').eq('subject', subject).eq('week', week);
-        if (qErr) throw qErr;
+        if (!student_id || !subject || !week || !student_answers) {
+            return res.status(400).json({ status: "error", message: "Data pengerjaan tidak lengkap." });
+        }
+
+        const questionIds = student_answers.map(ans => ans.question_id);
+
+        const { data: dbQuestions, error: qError } = await supabase
+            .from('questions')
+            .select('id, correct_answer')
+            .in('id', questionIds);
+
+        if (qError) throw qError;
 
         let correctCount = 0;
-        const totalQuestions = questions.length;
+        student_answers.forEach(studentAns => {
+            const match = dbQuestions.find(q => q.id === studentAns.question_id);
+            if (match && match.correct_answer.toUpperCase() === studentAns.answer.toUpperCase()) {
+                correctCount++;
+            }
+        });
+
+        const totalSoal = student_answers.length;
+        const score = totalSoal > 0 ? Math.round((correctCount / totalSoal) * 100) : 0;
         
-        if (totalQuestions > 0 && student_answers) {
-            student_answers.forEach(ans => {
-                const q = questions.find(q => q.id === ans.question_id);
-                if (q && q.correct_answer.toUpperCase() === ans.answer.toUpperCase()) correctCount++;
-            });
-        }
-        
-        const score = totalQuestions > 0 ? Math.round((correctCount / totalQuestions) * 100) : 100;
-        const category = score >= 80 ? 'A' : score >= 60 ? 'B' : 'C';
+        let category = 'C';
+        if (score >= 80) category = 'A';
+        else if (score >= 60) category = 'B';
 
-        // Cek apakah siswa sudah pernah mengerjakan? Jika sudah, Update. Jika belum, Insert.
-        const { data: existing } = await supabase.from('onboarding_results').select('id').eq('student_id', student_id).eq('subject', subject).eq('week', week).single();
+        const { error: resultError } = await supabase
+            .from('onboarding_results')
+            .insert([{
+                student_id,
+                subject,
+                week: parseInt(week),
+                score,
+                category,
+                student_answers, // Menyimpan riwayat jawaban (Update sebelumnya)
+                notes: "Koreksi otomatis oleh sistem"
+            }]);
 
-        if (existing) {
-            await supabase.from('onboarding_results').update({ score, category }).eq('id', existing.id);
-        } else {
-            await supabase.from('onboarding_results').insert([{ student_id, subject, week, score, category, student_answers }]);
-        }
+        if (resultError) throw resultError;
 
-        res.status(200).json({ status: "success", score, category });
+        // LOGIKA PEMBUATAN TODO (TUGAS AI) TELAH DIHAPUS SEPENUHNYA DARI SINI
+
+        res.status(201).json({ 
+            status: "success", 
+            message: "Jawaban berhasil dikirim dan dinilai." 
+        });
+
     } catch (error) {
+        console.error("Auto-Grade Error:", error.message);
         res.status(500).json({ status: "error", message: error.message });
     }
 };
 
 // 9. ENDPOINT LEGACY (Menjaga agar Router tidak error jika memanggil fungsi ini)
 const submitOnboarding = async (req, res) => res.status(200).json({ status: "success" });
-// 9. AMBIL DATA PROGRESS UNTUK GRAFIK SISWA
+// 10. AMBIL DATA PROGRESS UNTUK GRAFIK SISWA
 const getStudentProgress = async (req, res) => {
     try {
         const studentId = req.params.id;

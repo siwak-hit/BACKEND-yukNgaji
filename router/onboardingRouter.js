@@ -9,7 +9,6 @@ const {
     getQuestionsSummary,
     updateQuestion,
     deleteQuestion,
-    // ... sisanya sudah ada
 } = require('../controller/onboardingController');
 
 router.use(authMiddleware);

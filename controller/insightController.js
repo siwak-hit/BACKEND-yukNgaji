@@ -67,22 +67,23 @@ const getClassInsights = async (req, res) => {
 
 const getGlobalDashboard = async (req, res) => {
     try {
-        const [studentsRes, todosRes, consultationsRes] = await Promise.all([
+        // [PERBAIKAN] Tidak lagi menghitung TODO, diganti dengan Celengan Aktif dan Total Ujian
+        const [studentsRes, infaqRes, examsRes] = await Promise.all([
             supabase.from('students').select('*', { count: 'exact', head: true }),
-            supabase.from('todos').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-            supabase.from('consultations').select('*', { count: 'exact', head: true }).eq('is_read', false)
+            supabase.from('students').select('*', { count: 'exact', head: true }).eq('has_infaq_can', true),
+            supabase.from('exams').select('*', { count: 'exact', head: true })
         ]);
 
         if (studentsRes.error) throw studentsRes.error;
-        if (todosRes.error) throw todosRes.error;
-        if (consultationsRes.error) throw consultationsRes.error;
+        if (infaqRes.error) throw infaqRes.error;
+        if (examsRes.error) throw examsRes.error;
 
         res.status(200).json({
             status: "success",
             data: {
                 total_students: studentsRes.count || 0,
-                pending_tasks: todosRes.count || 0,
-                unread_messages: consultationsRes.count || 0
+                active_infaq: infaqRes.count || 0,
+                total_exams: examsRes.count || 0
             }
         });
 
@@ -90,5 +91,4 @@ const getGlobalDashboard = async (req, res) => {
         res.status(500).json({ status: "error", message: error.message });
     }
 };
-
 module.exports = { getClassInsights, getGlobalDashboard };

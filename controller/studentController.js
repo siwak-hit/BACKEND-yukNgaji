@@ -1,5 +1,6 @@
 const studentModel = require('../model/studentModel');
 const supabase = require('../config/supabaseClient');
+const bcrypt = require('bcrypt');
 
 
 // POST /students
@@ -231,28 +232,7 @@ const toggleInfaqCan = async (req, res) => {
     }
 };
 
-// ============================================================
-// GET /api/students/:id/lag-status
-//
-// BARU: Deteksi apakah anak tertinggal dari kelas.
-//
-// Logika:
-//   1. Ambil max week per mapel di tabel questions
-//      → "Current Week Kelas" (berapa pertemuan yang sudah ada soalnya)
-//   2. Ambil max week yang sudah dikerjakan anak di onboarding_results
-//      → "Student Week"
-//   3. Jika Student Week < Current Week Kelas → anak tertinggal
-//
-// Response:
-// {
-//   status: "success",
-//   data: {
-//     tajwid: { classWeek: 7, studentWeek: 5, isLagging: true,  missedWeeks: [6, 7] },
-//     fiqih:  { classWeek: 7, studentWeek: 7, isLagging: false, missedWeeks: [] },
-//     tauhid: { classWeek: 5, studentWeek: 0, isLagging: true,  missedWeeks: [1,2,3,4,5] },
-//   }
-// }
-// ============================================================
+
 const getStudentLagStatus = async (req, res) => {
     try {
         const { id } = req.params;
@@ -314,6 +294,141 @@ const getStudentLagStatus = async (req, res) => {
     }
 };
 
+// ============================================================
+// FITUR GALERI & HAPUS FOTO
+// ============================================================
+
+// 1. Ambil Foto Gaya Bebas
+const getStudentGallery = async (req, res) => {
+    try {
+        const { data, error } = await supabase.from('student_gallery').select('*').eq('student_id', req.params.id).order('created_at', { ascending: false });
+        if (error) throw error;
+        res.status(200).json({ status: "success", data: data || [] });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+// 2. Upload Foto Gaya Bebas dari PhotoBooth
+const uploadGalleryPhoto = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { image_base64 } = req.body;
+        if (!image_base64) return res.status(400).json({ message: "Foto kosong" });
+
+        const base64Data = image_base64.replace(/^data:image\/\w+;base64,/, "");
+        const buffer = Buffer.from(base64Data, 'base64');
+        const fileName = `gallery_${id}_${Date.now()}.jpg`;
+
+        // Upload ke bucket 'gallery_captures'
+        const { error: uploadError } = await supabase.storage.from('gallery_captures').upload(fileName, buffer, { contentType: 'image/jpeg', upsert: true });
+        if (uploadError) throw uploadError;
+
+        const { data: publicUrlData } = supabase.storage.from('gallery_captures').getPublicUrl(fileName);
+        const capture_url = publicUrlData.publicUrl;
+
+        // Simpan ke database
+        await supabase.from('student_gallery').insert([{ student_id: id, image_url: capture_url }]);
+
+        res.status(200).json({ status: "success", message: "Foto galeri tersimpan" });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+// 3. Hapus Foto Sakti (Storage + DB) dengan Password Admin Dinamis
+const deleteStudentPhoto = async (req, res) => {
+    try {
+        const { id, type, url, password } = req.body; 
+        const username = req.user.username; // Mengambil username guru yang sedang login dari token
+
+        // 1. Ambil data password guru dari tabel 'users'
+        const { data: adminData, error: adminErr } = await supabase
+            .from('users')
+            .select('password')
+            .eq('username', username)
+            .single();
+
+        if (adminErr || !adminData) {
+            return res.status(403).json({ status: "error", message: "Akun admin tidak ditemukan!" });
+        }
+
+        // 2. Bandingkan kecocokan password
+        let isMatch = false;
+        // Cek apakah password di DB menggunakan enkripsi bcrypt (biasanya diawali $2b$ atau $2a$)
+        if (adminData.password.startsWith('$2')) {
+            isMatch = await bcrypt.compare(password, adminData.password);
+        } else {
+            // Fallback: Jika di database password Ustadz masih berupa teks biasa (belum di-hash)
+            isMatch = (password === adminData.password);
+        }
+
+        if (!isMatch) {
+            return res.status(403).json({ status: "error", message: "Password Admin Salah!" });
+        }
+
+        // A. HAPUS DARI STORAGE SUPABASE (Otomatis deteksi bucket dari URL)
+        try {
+            const parts = url.split('/public/');
+            if (parts.length === 2) {
+                const pathParts = parts[1].split('/');
+                const bucket = pathParts[0];
+                const filePath = pathParts.slice(1).join('/');
+                await supabase.storage.from(bucket).remove([filePath]); 
+            }
+        } catch (e) {
+            console.log("Storage delete error (diabaikan):", e.message);
+        }
+
+        // B. HAPUS/PUTIHKAN DARI DATABASE SESUAI SUMBERNYA
+        if (type === 'consultation') {
+            await supabase.from('consultations').update({ image_url: null }).eq('id', id);
+        } else if (type === 'exam') {
+            await supabase.from('exam_results').update({ capture_url: null }).eq('id', id);
+        } else if (type === 'gallery') {
+            await supabase.from('student_gallery').delete().eq('id', id); 
+        }
+
+        res.status(200).json({ status: "success", message: "Foto berhasil dimusnahkan" });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+// 4. Radar Pencari Foto Terbaru untuk Raport
+const getLatestStudentPhoto = async (req, res) => {
+    try {
+        const studentId = req.params.id;
+        
+        // Tarik 1 foto terbaru dari masing-masing 3 sumber
+        const [galRes, exmRes, cnsRes] = await Promise.all([
+            supabase.from('student_gallery').select('image_url, created_at').eq('student_id', studentId).order('created_at', { ascending: false }).limit(1),
+            supabase.from('exam_results').select('capture_url, created_at').eq('student_id', studentId).not('capture_url', 'is', null).order('created_at', { ascending: false }).limit(1),
+            supabase.from('consultations').select('image_url, created_at').eq('student_id', studentId).not('image_url', 'is', null).order('created_at', { ascending: false }).limit(1)
+        ]);
+
+        let allPhotos = [];
+        
+        if (galRes.data && galRes.data.length > 0) allPhotos.push({ url: galRes.data[0].image_url, date: new Date(galRes.data[0].created_at) });
+        if (exmRes.data && exmRes.data.length > 0) allPhotos.push({ url: exmRes.data[0].capture_url, date: new Date(exmRes.data[0].created_at) });
+        if (cnsRes.data && cnsRes.data.length > 0) allPhotos.push({ url: cnsRes.data[0].image_url, date: new Date(cnsRes.data[0].created_at) });
+
+        // Jika anak ini sama sekali belum pernah difoto
+        if (allPhotos.length === 0) {
+            return res.status(200).json({ status: "success", data: null });
+        }
+
+        // Urutkan, ambil yang paling baru (paling update)
+        allPhotos.sort((a, b) => b.date - a.date);
+
+        // Kirim 1 link foto pemenangnya
+        res.status(200).json({ status: "success", data: allPhotos[0].url });
+
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
 module.exports = { 
     addStudent, 
     getAllStudents, 
@@ -324,5 +439,9 @@ module.exports = {
     getStudentConsultations,
     getStudentAttendance,
     toggleInfaqCan,
-    getStudentLagStatus   // BARU
+    getStudentLagStatus,
+    getStudentGallery,
+    uploadGalleryPhoto,
+    deleteStudentPhoto,
+    getLatestStudentPhoto
 };

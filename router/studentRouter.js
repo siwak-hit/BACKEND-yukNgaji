@@ -48,4 +48,11 @@ router.get('/:id/memorization-logs', authMiddleware, getMemorizationLogs);
 // [PERBAIKAN KUNCI 2]: Pastikan rutenya benar-benar '/:id/lag-status' agar terhubung ke Frontend
 router.get('/:id/lag-status', authMiddleware, getStudentLagStatus);
 
+
+router.get('/:id/gallery', authMiddleware, studentController.getStudentGallery);
+router.post('/:id/upload-photo', authMiddleware, studentController.uploadGalleryPhoto);
+router.post('/gallery/delete-photo', authMiddleware, studentController.deleteStudentPhoto);
+
+router.get('/:id/latest-photo', authMiddleware, studentController.getLatestStudentPhoto);
+
 module.exports = router;
