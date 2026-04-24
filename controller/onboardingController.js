@@ -1,7 +1,7 @@
 const supabase = require('../config/supabaseClient');
 const onboardingModel = require('../model/onboardingModel');
 
-// 1. TAMBAH BANYAK SOAL SEKALIGUS (Dari Upload TXT atau Input Manual)
+// 1. TAMBAH BANYAK SOAL SEKALIGUS
 const saveParsedQuestions = async (req, res) => {
     try {
         const { subject, week, questions } = req.body;
@@ -9,17 +9,24 @@ const saveParsedQuestions = async (req, res) => {
             return res.status(400).json({ status: "error", message: "Data tidak lengkap" });
         }
 
-        // [PERBAIKAN KUNCI]: Pastikan kolom 'type' ikut ditangkap dan disimpan!
-        const formattedQuestions = questions.map(q => ({
-            subject,
-            week: parseInt(week),
-            type: q.type || 'pilgan', 
-            question: q.question,
-            options: q.options,
-            correct_answer: q.correct_answer,
-            difficulty_level: q.difficulty_level || 'sedang',
-            image_url: q.image_url ? q.image_url.trim() : null
-        }));
+        const formattedQuestions = questions.map(q => {
+            // [MODIFIKASI]: Jika tipe soal urutan dan correct_answer berupa array, jadikan string JSON
+            let finalCorrectAnswer = q.correct_answer;
+            if (q.type === 'urutan' && Array.isArray(q.correct_answer)) {
+                finalCorrectAnswer = JSON.stringify(q.correct_answer);
+            }
+
+            return {
+                subject,
+                week: parseInt(week),
+                type: q.type || 'pilgan', 
+                question: q.question,
+                options: q.options,
+                correct_answer: finalCorrectAnswer, // Simpan text/string
+                difficulty_level: q.difficulty_level || 'sedang',
+                image_url: q.image_url ? q.image_url.trim() : null
+            };
+        });
 
         const { data, error } = await supabase.from('questions').insert(formattedQuestions).select('id');
         if (error) throw error;
@@ -35,10 +42,13 @@ const saveParsedQuestions = async (req, res) => {
 const updateQuestion = async (req, res) => {
     try {
         const { id } = req.params;
-        // [PERBAIKAN KUNCI]: Pastikan 'type' diambil dari body request
-        const { type, question, options, correct_answer, difficulty_level } = req.body;
+        const { type, question, options, correct_answer, difficulty_level, image_url } = req.body;
 
-        const { image_url } = req.body;
+        // [MODIFIKASI]: Handle format jawaban untuk soal tipe urutan
+        let finalCorrectAnswer = correct_answer;
+        if (type === 'urutan' && Array.isArray(correct_answer)) {
+            finalCorrectAnswer = JSON.stringify(correct_answer);
+        }
 
         const { data, error } = await supabase
             .from('questions')
@@ -46,7 +56,7 @@ const updateQuestion = async (req, res) => {
                 type: type || 'pilgan', 
                 question, 
                 options, 
-                correct_answer, 
+                correct_answer: finalCorrectAnswer, 
                 difficulty_level,
                 image_url: image_url ? image_url.trim() : null
             })
@@ -171,22 +181,41 @@ const submitAndGradeAnswers = async (req, res) => {
 
         const { data: dbQuestions, error: qError } = await supabase
             .from('questions')
-            .select('id, correct_answer')
+            .select('id, correct_answer, type') // [PERBAIKAN KUNCI]: Ambil juga kolom 'type'
             .in('id', questionIds);
 
         if (qError) throw qError;
 
         let correctCount = 0;
+        
         student_answers.forEach(studentAns => {
             const match = dbQuestions.find(q => q.id === studentAns.question_id);
-            if (match && match.correct_answer.toUpperCase() === studentAns.answer.toUpperCase()) {
-                correctCount++;
+            
+            if (match) {
+                // Logika penilaian dipisah berdasarkan tipe soal
+                if (match.type === 'urutan') {
+                    // Cek soal urutan: ubah jawaban siswa (array) jadi string, samakan dgn DB
+                    const studentAnsString = Array.isArray(studentAns.answer) 
+                        ? JSON.stringify(studentAns.answer) 
+                        : studentAns.answer;
+
+                    // Di database formatnya sudah stringified JSON array
+                    if (studentAnsString === match.correct_answer) {
+                        correctCount++;
+                    }
+                } else {
+                    // Logika soal standar (pilgan, true_false)
+                    if (match.correct_answer.toUpperCase() === String(studentAns.answer).toUpperCase()) {
+                        correctCount++;
+                    }
+                }
             }
         });
 
         const totalSoal = student_answers.length;
         const score = totalSoal > 0 ? Math.round((correctCount / totalSoal) * 100) : 0;
         
+        // ... (Kode untuk penentuan category dan insert DB ke onboarding_results tetap sama)
         let category = 'C';
         if (score >= 80) category = 'A';
         else if (score >= 60) category = 'B';
@@ -199,13 +228,11 @@ const submitAndGradeAnswers = async (req, res) => {
                 week: parseInt(week),
                 score,
                 category,
-                student_answers, // Menyimpan riwayat jawaban (Update sebelumnya)
+                student_answers, 
                 notes: "Koreksi otomatis oleh sistem"
             }]);
 
         if (resultError) throw resultError;
-
-        // LOGIKA PEMBUATAN TODO (TUGAS AI) TELAH DIHAPUS SEPENUHNYA DARI SINI
 
         res.status(201).json({ 
             status: "success", 
