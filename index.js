@@ -14,6 +14,7 @@ const raportRouter = require('./router/raportRouter');
 const attendanceRouter = require('./router/attendanceRouter');
 const adminRouter = require('./router/adminRouter');
 const examRouter = require('./router/examRouter');
+const shopRouter = require('./router/shopRouter');
 
 // 1. Konfigurasi CORS (Sangat penting agar Frontend di Vercel bisa akses)
 app.use(cors({
@@ -49,6 +50,7 @@ app.use('/api/raports', raportRouter);
 app.use('/api/attendances', attendanceRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/exams', examRouter);
+app.use('/api/shop', shopRouter);
 
 // 4. Export untuk dibaca oleh platform Serverless Vercel
 module.exports = app;

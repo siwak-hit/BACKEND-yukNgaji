@@ -9,6 +9,7 @@ const {
     getQuestionsSummary,
     updateQuestion,
     deleteQuestion,
+    retryWrongAnswers
 } = require('../controller/onboardingController');
 
 router.use(authMiddleware);
@@ -27,6 +28,7 @@ router.delete('/questions/:id',         authMiddleware, deleteQuestion);
 router.get('/questions/:subject', onboardingController.getQuestions);
 router.get('/available-weeks/:subject', onboardingController.getAvailableWeeks);
 router.get('/status', onboardingController.getCompletionStatus);
+router.post('/retry', onboardingController.retryWrongAnswers);
 
 
 module.exports = router;

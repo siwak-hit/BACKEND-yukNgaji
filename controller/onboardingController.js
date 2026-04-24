@@ -171,7 +171,8 @@ const getCompletionStatus = async (req, res) => {
 // 8. SIMPAN NILAI JAWABAN SISWA
 const submitAndGradeAnswers = async (req, res) => {
     try {
-        const { student_id, subject, week, student_answers } = req.body;
+        // [BARU] Tangkap is_double_score dari FE
+        const { student_id, subject, week, student_answers, is_double_score } = req.body;
 
         if (!student_id || !subject || !week || !student_answers) {
             return res.status(400).json({ status: "error", message: "Data pengerjaan tidak lengkap." });
@@ -181,63 +182,83 @@ const submitAndGradeAnswers = async (req, res) => {
 
         const { data: dbQuestions, error: qError } = await supabase
             .from('questions')
-            .select('id, correct_answer, type') // [PERBAIKAN KUNCI]: Ambil juga kolom 'type'
+            .select('id, correct_answer, type')
             .in('id', questionIds);
 
         if (qError) throw qError;
 
+        // 1. Hitung Nilai Mentah / Asli
         let correctCount = 0;
-        
         student_answers.forEach(studentAns => {
             const match = dbQuestions.find(q => q.id === studentAns.question_id);
-            
             if (match) {
-                // Logika penilaian dipisah berdasarkan tipe soal
                 if (match.type === 'urutan') {
-                    // Cek soal urutan: ubah jawaban siswa (array) jadi string, samakan dgn DB
-                    const studentAnsString = Array.isArray(studentAns.answer) 
-                        ? JSON.stringify(studentAns.answer) 
-                        : studentAns.answer;
-
-                    // Di database formatnya sudah stringified JSON array
-                    if (studentAnsString === match.correct_answer) {
-                        correctCount++;
-                    }
+                    const studentAnsString = Array.isArray(studentAns.answer) ? JSON.stringify(studentAns.answer) : studentAns.answer;
+                    if (studentAnsString === match.correct_answer) correctCount++;
                 } else {
-                    // Logika soal standar (pilgan, true_false)
-                    if (match.correct_answer.toUpperCase() === String(studentAns.answer).toUpperCase()) {
-                        correctCount++;
-                    }
+                    if (match.correct_answer.toUpperCase() === String(studentAns.answer).toUpperCase()) correctCount++;
                 }
             }
         });
 
         const totalSoal = student_answers.length;
-        const score = totalSoal > 0 ? Math.round((correctCount / totalSoal) * 100) : 0;
+        const rawScore = totalSoal > 0 ? Math.round((correctCount / totalSoal) * 100) : 0;
         
-        // ... (Kode untuk penentuan category dan insert DB ke onboarding_results tetap sama)
-        let category = 'C';
-        if (score >= 80) category = 'A';
-        else if (score >= 60) category = 'B';
+        // 2. Ambil data dompet & inventory siswa dari DB
+        const { data: studentInfo } = await supabase
+            .from('students')
+            .select('poin, item_double_score')
+            .eq('id', student_id)
+            .single();
 
+        let finalScore = rawScore;
+        let isItemUsed = false;
+
+        // 3. Terapkan Sihir Double Poin (JIKA DIA MEMINTA & JIKA DIA BENARAN PUNYA DI DB)
+        if (is_double_score && studentInfo && studentInfo.item_double_score > 0) {
+            isItemUsed = true;
+            if (finalScore < 30) finalScore += 20;
+            else if (finalScore < 50) finalScore += 15;
+            else if (finalScore < 70) finalScore += 10;
+            else if (finalScore < 100) finalScore += 5;
+            
+            if (finalScore > 100) finalScore = 100; // Cap maksimal
+        }
+
+        let category = 'C';
+        if (finalScore >= 80) category = 'A';
+        else if (finalScore >= 60) category = 'B';
+
+        // 4. Update Saldo Uang dan Kurangi Item jika dipakai
+        if (studentInfo) {
+            let newPoin = studentInfo.poin + finalScore; // Poin dompet bertambah sebanyak nilai akhir
+            let newDoubleCount = studentInfo.item_double_score;
+            
+            if (isItemUsed) {
+                newDoubleCount -= 1; // Konsumsi item di Database
+            }
+
+            await supabase.from('students')
+                .update({ poin: newPoin, item_double_score: newDoubleCount })
+                .eq('id', student_id);
+        }
+
+        // 5. Simpan Hasil Ujian Permanen (dengan Final Score)
         const { error: resultError } = await supabase
             .from('onboarding_results')
             .insert([{
                 student_id,
                 subject,
                 week: parseInt(week),
-                score,
+                score: finalScore, // Nilai yang disimpan adalah yang sudah di-buff!
                 category,
                 student_answers, 
-                notes: "Koreksi otomatis oleh sistem"
+                notes: isItemUsed ? "Koreksi Sihir ✨ (Double Poin Aktif)" : "Koreksi otomatis oleh sistem"
             }]);
 
         if (resultError) throw resultError;
 
-        res.status(201).json({ 
-            status: "success", 
-            message: "Jawaban berhasil dikirim dan dinilai." 
-        });
+        res.status(201).json({ status: "success", message: "Jawaban berhasil dikirim dan dinilai." });
 
     } catch (error) {
         console.error("Auto-Grade Error:", error.message);
@@ -292,6 +313,64 @@ const getReviewData = async (req, res) => {
     }
 };
 
+// 11. FITUR EXTRA LIFE: Perbaiki Jawaban Salah
+const retryWrongAnswers = async (req, res) => {
+    try {
+        const { student_id, result_id, fixed_answers } = req.body;
+
+        // 1. Cek kepemilikan item Extra Life
+        const { data: student, error: studentErr } = await supabase
+            .from('students').select('item_extra_life').eq('id', student_id).single();
+        
+        if (studentErr || student.item_extra_life <= 0) {
+            return res.status(400).json({ status: "error", message: "Kamu tidak memiliki item Extra Life!" });
+        }
+
+        // 2. Ambil hasil ujian sebelumnya
+        const { data: pastResult, error: resultErr } = await supabase
+            .from('onboarding_results').select('*').eq('id', result_id).single();
+            
+        if (resultErr) throw resultErr;
+
+        let updatedAnswers = pastResult.student_answers;
+
+        // 3. Timpa jawaban lama dengan jawaban perbaikan dari frontend
+        fixed_answers.forEach(fix => {
+            const index = updatedAnswers.findIndex(ans => ans.question_id === fix.question_id);
+            if (index !== -1) updatedAnswers[index].answer = fix.answer;
+        });
+
+        // 4. Lakukan penilaian ulang (mirip dengan logika grading biasa)
+        const questionIds = updatedAnswers.map(ans => ans.question_id);
+        const { data: dbQuestions } = await supabase.from('questions').select('id, correct_answer, type').in('id', questionIds);
+        
+        let correctCount = 0;
+        updatedAnswers.forEach(ans => {
+            const match = dbQuestions.find(q => q.id === ans.question_id);
+            if (match && String(ans.answer).toUpperCase() === match.correct_answer.toUpperCase()) {
+                correctCount++;
+            }
+        });
+
+        const newScore = Math.round((correctCount / updatedAnswers.length) * 100);
+        let newCategory = newScore >= 80 ? 'A' : (newScore >= 60 ? 'B' : 'C');
+
+        // 5. Update hasil di DB & kurangi item Extra Life
+        await supabase.from('onboarding_results').update({
+            score: newScore, category: newCategory, student_answers: updatedAnswers, notes: "Dikoreksi menggunakan Extra Life"
+        }).eq('id', result_id);
+
+        await supabase.from('students').update({
+            item_extra_life: student.item_extra_life - 1
+        }).eq('id', student_id);
+
+        res.status(200).json({ status: "success", message: "Nilai berhasil diperbarui!", newScore });
+
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
 module.exports = {
     saveParsedQuestions,
     updateQuestion,
@@ -303,5 +382,6 @@ module.exports = {
     submitAndGradeAnswers,
     submitOnboarding,
     getStudentProgress,
-    getReviewData
+    getReviewData,
+    retryWrongAnswers
 };
