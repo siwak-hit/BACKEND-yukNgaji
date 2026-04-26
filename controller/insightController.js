@@ -91,4 +91,37 @@ const getGlobalDashboard = async (req, res) => {
         res.status(500).json({ status: "error", message: error.message });
     }
 };
-module.exports = { getClassInsights, getGlobalDashboard };
+
+const getFilters = async (req, res) => {
+    try {
+        // Ambil semua kombinasi soal yang ada di kurikulum
+        const { data, error } = await supabase
+            .from('questions')
+            .select('subject, week');
+
+        if (error) throw error;
+
+        const subjects = [...new Set(data.map(item => item.subject))].filter(Boolean);
+        const weeks = [...new Set(data.map(item => item.week))].filter(Boolean).sort((a, b) => a - b);
+
+        // Cari tahu tugas apa saja yang "Valid/Tersedia"
+        const available_tasks = [];
+        const seen = new Set();
+        data.forEach(q => {
+            const key = `${q.subject}-${q.week}`;
+            if (!seen.has(key)) {
+                seen.add(key);
+                available_tasks.push({ subject: q.subject, week: q.week });
+            }
+        });
+
+        res.status(200).json({
+            status: "success",
+            data: { subjects, weeks, available_tasks } // available_tasks dikirim ke frontend
+        });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+module.exports = { getClassInsights, getGlobalDashboard, getFilters };

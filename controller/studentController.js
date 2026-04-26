@@ -429,6 +429,72 @@ const getLatestStudentPhoto = async (req, res) => {
     }
 };
 
+const getStudentsWithStats = async (req, res) => {
+    try {
+        const username = req.user.username;
+
+        // 1. Ambil data dasar murid
+        const { data: students, error: err1 } = await supabase.from('students')
+            .select('id, name, grade').eq('created_by', username);
+        if (err1) throw err1;
+        if (!students || students.length === 0) return res.status(200).json({ status: "success", data: [] });
+
+        const studentIds = students.map(s => s.id);
+
+        // 2. Ambil SEMUA nilai sekaligus
+        const { data: progress } = await supabase.from('onboarding_results')
+            .select('student_id, subject, score, week') // <--- TAMBAHKAN 'week' DI SINI
+            .in('student_id', studentIds);
+
+        // 3. Ambil SEMUA absen sekaligus
+        const { data: attendances } = await supabase.from('attendances')
+            .select('date, present_students').eq('created_by', username);
+
+        // 4. Ambil SEMUA foto konsultasi sekaligus
+        const { data: photos } = await supabase.from('consultations')
+            .select('student_id, image_url').not('image_url', 'is', null).in('student_id', studentIds);
+
+        // 5. Olah & Gabungkan di memory server (Sangat Cepat)
+        const enriched = students.map(s => {
+            const sProg = (progress || []).filter(p => p.student_id === s.id);
+            const tajwid = sProg.filter(p => p.subject === 'tajwid');
+            const fiqih = sProg.filter(p => p.subject === 'fiqih');
+            const tauhid = sProg.filter(p => p.subject === 'tauhid');
+
+            const t_avg = tajwid.length ? Math.round(tajwid.reduce((a,b)=>a+b.score,0)/tajwid.length) : 0;
+            const f_avg = fiqih.length ? Math.round(fiqih.reduce((a,b)=>a+b.score,0)/fiqih.length) : 0;
+            const th_avg = tauhid.length ? Math.round(tauhid.reduce((a,b)=>a+b.score,0)/tauhid.length) : 0;
+            const finalScore = Math.round((t_avg + f_avg + th_avg) / 3) || 0;
+
+            let hadir = 0;
+            (attendances || []).forEach(att => {
+                if (att.present_students && att.present_students[s.id] && att.present_students[s.id].status === 'hadir') hadir++;
+            });
+
+            const latestPhoto = (photos || []).find(p => p.student_id === s.id)?.image_url || null;
+            const completed_tasks = sProg.map(p => ({
+                subject: p.subject,
+                week: p.week
+            }));
+
+            return { 
+                ...s, 
+                t_avg, 
+                f_avg, 
+                th_avg, 
+                finalScore, 
+                hadir, 
+                photo_url: latestPhoto,
+                completed_tasks // <--- WAJIB DITAMBAHKAN
+            };
+        });
+
+        res.status(200).json({ status: "success", data: enriched });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
 module.exports = { 
     addStudent, 
     getAllStudents, 
@@ -443,5 +509,6 @@ module.exports = {
     getStudentGallery,
     uploadGalleryPhoto,
     deleteStudentPhoto,
-    getLatestStudentPhoto
+    getLatestStudentPhoto,
+    getStudentsWithStats
 };

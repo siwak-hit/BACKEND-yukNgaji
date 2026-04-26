@@ -16,6 +16,7 @@ const {
 router.use(authMiddleware);
 
 // Core student CRUD
+router.get('/stats/enriched', authMiddleware, studentController.getStudentsWithStats);
 router.post('/', studentController.addStudent);
 router.get('/', studentController.getAllStudents);
 router.get('/:id', studentController.getStudent);
