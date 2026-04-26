@@ -17,9 +17,10 @@ const buyItem = async (req, res) => {
             return res.status(400).json({ status: "error", message: "Item tidak valid." });
         }
 
-        const price = ITEM_PRICES[item_type];
+        // Gunakan harga asli (statis)
+        const finalPrice = ITEM_PRICES[item_type];
 
-        // Cek saldo poin murid
+        // Ambil data terbaru dari DB
         const { data: student, error: fetchError } = await supabase
             .from('students')
             .select('poin, item_double_score, item_serang, item_perisai, item_extra_life')
@@ -28,14 +29,18 @@ const buyItem = async (req, res) => {
 
         if (fetchError || !student) throw fetchError || new Error("Siswa tidak ditemukan");
 
-        if (student.poin < price) {
-            return res.status(400).json({ status: "error", message: "Poin tidak cukup untuk membeli item ini." });
+        // Pastikan poin cukup
+        if (Number(student.poin) < finalPrice) {
+            return res.status(400).json({ 
+                status: "error", 
+                message: `Poin tidak cukup. Butuh ${finalPrice}, poinmu ${student.poin}` 
+            });
         }
 
-        // Kurangi poin dan tambah item
+        // Kurangi poin dan tambah item ke inventory DB
         const updatedData = {
-            poin: student.poin - price,
-            [item_type]: student[item_type] + 1
+            poin: Number(student.poin) - finalPrice,
+            [item_type]: (student[item_type] || 0) + 1
         };
 
         const { error: updateError } = await supabase
@@ -45,11 +50,7 @@ const buyItem = async (req, res) => {
 
         if (updateError) throw updateError;
 
-        res.status(200).json({ 
-            status: "success", 
-            message: "Berhasil membeli item!", 
-            data: updatedData 
-        });
+        res.status(200).json({ status: "success", message: "Berhasil membeli item!", data: updatedData });
 
     } catch (error) {
         console.error("Buy Item Error:", error.message);
@@ -210,4 +211,39 @@ const markNotificationsRead = async (req, res) => {
     }
 };
 
-module.exports = { buyItem, attackFriend, getPeers, getAttackNotifications, markNotificationsRead };
+// 6. KLAIM BONUS WELCOME 50 POIN
+const claimWelcomeBonus = async (req, res) => {
+    try {
+        const { student_id } = req.body;
+        
+        // Cek apakah sudah pernah klaim
+        const { data: student, error: fetchErr } = await supabase
+            .from('students')
+            .select('poin, has_claimed_bonus')
+            .eq('id', student_id)
+            .single();
+
+        if (fetchErr) throw fetchErr;
+
+        if (student.has_claimed_bonus) {
+            return res.status(400).json({ status: "error", message: "Bonus ini sudah pernah kamu ambil sebelumnya!" });
+        }
+
+        const newPoin = (student.poin || 0) + 50;
+        
+        // Update Poin dan ubah status has_claimed_bonus jadi TRUE
+        const { error: updateErr } = await supabase
+            .from('students')
+            .update({ poin: newPoin, has_claimed_bonus: true })
+            .eq('id', student_id);
+
+        if (updateErr) throw updateErr;
+
+        res.status(200).json({ status: "success", data: { poin: newPoin } });
+    } catch (error) {
+        console.error("Claim Bonus Error:", error.message);
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+module.exports = { buyItem, attackFriend, getPeers, getAttackNotifications, markNotificationsRead, claimWelcomeBonus };

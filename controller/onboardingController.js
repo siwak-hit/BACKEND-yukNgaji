@@ -172,7 +172,7 @@ const getCompletionStatus = async (req, res) => {
 const submitAndGradeAnswers = async (req, res) => {
     try {
         // [BARU] Tangkap is_double_score dari FE
-        const { student_id, subject, week, student_answers, is_double_score } = req.body;
+        const { student_id, subject, week, student_answers, is_double_score, is_extra_life_used } = req.body;
 
         if (!student_id || !subject || !week || !student_answers) {
             return res.status(400).json({ status: "error", message: "Data pengerjaan tidak lengkap." });
@@ -207,7 +207,7 @@ const submitAndGradeAnswers = async (req, res) => {
         // 2. Ambil data dompet & inventory siswa dari DB
         const { data: studentInfo } = await supabase
             .from('students')
-            .select('poin, item_double_score')
+            .select('poin, item_double_score, item_extra_life') // <-- Tambah item_extra_life di sini
             .eq('id', student_id)
             .single();
 
@@ -231,15 +231,23 @@ const submitAndGradeAnswers = async (req, res) => {
 
         // 4. Update Saldo Uang dan Kurangi Item jika dipakai
         if (studentInfo) {
-            let newPoin = studentInfo.poin + finalScore; // Poin dompet bertambah sebanyak nilai akhir
+            let newPoin = studentInfo.poin + finalScore;
             let newDoubleCount = studentInfo.item_double_score;
+            let newExtraLifeCount = studentInfo.item_extra_life;
             
-            if (isItemUsed) {
-                newDoubleCount -= 1; // Konsumsi item di Database
+            if (isItemUsed) newDoubleCount -= 1; // Kurangi Double Score
+            
+            // [PERBAIKAN]: Kurangi Extra Life di DB jika dipakai
+            if (is_extra_life_used && newExtraLifeCount > 0) {
+                newExtraLifeCount -= 1;
             }
 
             await supabase.from('students')
-                .update({ poin: newPoin, item_double_score: newDoubleCount })
+                .update({ 
+                    poin: newPoin, 
+                    item_double_score: newDoubleCount,
+                    item_extra_life: newExtraLifeCount
+                })
                 .eq('id', student_id);
         }
 

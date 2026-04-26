@@ -11,4 +11,6 @@ router.get('/peers', shopController.getPeers); // <-- [BARU] Tambahkan baris ini
 router.get('/notifications', shopController.getAttackNotifications);
 router.post('/notifications/read', shopController.markNotificationsRead);
 
+router.post('/claim-bonus', shopController.claimWelcomeBonus);
+
 module.exports = router;
