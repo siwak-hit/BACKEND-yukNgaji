@@ -309,25 +309,29 @@ const getStudentGallery = async (req, res) => {
     }
 };
 
-// 2. Upload Foto Gaya Bebas dari PhotoBooth
+// 2. Upload Foto Gaya Bebas dari PhotoBooth (Menggunakan Multer Buffer)
 const uploadGalleryPhoto = async (req, res) => {
     try {
         const { id } = req.params;
-        const { image_base64 } = req.body;
-        if (!image_base64) return res.status(400).json({ message: "Foto kosong" });
+        
+        // Tangkap file dari multer (req.file)
+        if (!req.file) return res.status(400).json({ message: "Foto kosong" });
 
-        const base64Data = image_base64.replace(/^data:image\/\w+;base64,/, "");
-        const buffer = Buffer.from(base64Data, 'base64');
+        const buffer = req.file.buffer;
         const fileName = `gallery_${id}_${Date.now()}.jpg`;
 
-        // Upload ke bucket 'gallery_captures'
-        const { error: uploadError } = await supabase.storage.from('gallery_captures').upload(fileName, buffer, { contentType: 'image/jpeg', upsert: true });
+        // Upload ke bucket 'gallery_captures' Supabase
+        const { error: uploadError } = await supabase.storage.from('gallery_captures').upload(fileName, buffer, { 
+            contentType: req.file.mimetype, 
+            upsert: true 
+        });
         if (uploadError) throw uploadError;
 
+        // Ambil Public URL
         const { data: publicUrlData } = supabase.storage.from('gallery_captures').getPublicUrl(fileName);
         const capture_url = publicUrlData.publicUrl;
 
-        // Simpan ke database
+        // Simpan link-nya ke database
         await supabase.from('student_gallery').insert([{ student_id: id, image_url: capture_url }]);
 
         res.status(200).json({ status: "success", message: "Foto galeri tersimpan" });

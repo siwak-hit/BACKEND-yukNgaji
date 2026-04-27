@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer'); 
+const upload = multer({ storage: multer.memoryStorage() }); 
 const studentController = require('../controller/studentController');
 const onboardingController = require('../controller/onboardingController');
 const todoController = require('../controller/todoController');
@@ -51,7 +53,7 @@ router.get('/:id/lag-status', authMiddleware, getStudentLagStatus);
 
 
 router.get('/:id/gallery', authMiddleware, studentController.getStudentGallery);
-router.post('/:id/upload-photo', authMiddleware, studentController.uploadGalleryPhoto);
+router.post('/:id/upload-photo', authMiddleware, upload.single('image'), studentController.uploadGalleryPhoto);
 router.post('/gallery/delete-photo', authMiddleware, studentController.deleteStudentPhoto);
 
 router.get('/:id/latest-photo', authMiddleware, studentController.getLatestStudentPhoto);
