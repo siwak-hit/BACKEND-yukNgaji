@@ -57,5 +57,8 @@ router.post('/:id/upload-photo', authMiddleware, upload.single('image'), student
 router.post('/gallery/delete-photo', authMiddleware, studentController.deleteStudentPhoto);
 
 router.get('/:id/latest-photo', authMiddleware, studentController.getLatestStudentPhoto);
+// Tambahkan baris ini
+router.get('/:id/point-history', authMiddleware, studentController.getPointHistory);
+
 
 module.exports = router;

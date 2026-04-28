@@ -258,7 +258,7 @@ const submitAndGradeAnswers = async (req, res) => {
                 student_id,
                 subject,
                 week: parseInt(week),
-                score: finalScore, // Nilai yang disimpan adalah yang sudah di-buff!
+                score: finalScore, 
                 category,
                 student_answers, 
                 notes: isItemUsed ? "Koreksi Sihir ✨ (Double Poin Aktif)" : "Koreksi otomatis oleh sistem"
@@ -266,8 +266,53 @@ const submitAndGradeAnswers = async (req, res) => {
 
         if (resultError) throw resultError;
 
-        res.status(201).json({ status: "success", message: "Jawaban berhasil dikirim dan dinilai." });
+        // =========================================================
+        // --- LOGIKA PEMUSNAHAN PERISAI MASSAL (LANGKAH 5) ---
+        // =========================================================
+        // 1. Ambil nama ustadz (created_by) dari siswa yang sedang submit
+        const { data: currentStudentData } = await supabase
+            .from('students')
+            .select('created_by')
+            .eq('id', student_id)
+            .single();
 
+        if (currentStudentData && currentStudentData.created_by) {
+            const teacherUsername = currentStudentData.created_by;
+
+            // 2. Ambil daftar murid reguler di kelas tersebut (Abaikan akun Testing)
+            const { data: regularStudents } = await supabase
+                .from('students')
+                .select('id')
+                .eq('created_by', teacherUsername)
+                .not('name', 'ilike', '%john doe%')
+                .not('name', 'ilike', '%xaveria%');
+
+            if (regularStudents && regularStudents.length > 0) {
+                const regularIds = regularStudents.map(s => s.id);
+
+                // 3. Cek siapa saja yang sudah mengerjakan mapel & week ini
+                const { data: submitted } = await supabase
+                    .from('onboarding_results')
+                    .select('student_id')
+                    .eq('subject', subject)
+                    .eq('week', week)
+                    .in('student_id', regularIds);
+
+                const submittedIds = new Set((submitted || []).map(r => r.student_id));
+
+                // 4. Jika semua murid reguler sudah ngerjain, KELAS SELESAI!
+                if (regularIds.every(id => submittedIds.has(id))) {
+                    // MATIKAN SEMUA PERISAI DI KELAS TERSEBUT
+                    await supabase
+                        .from('students')
+                        .update({ is_shield_active: false })
+                        .eq('created_by', teacherUsername);
+                }
+            }
+        }
+        // =========================================================
+
+        res.status(201).json({ status: "success", message: "Jawaban berhasil dikirim dan dinilai." });
     } catch (error) {
         console.error("Auto-Grade Error:", error.message);
         res.status(500).json({ status: "error", message: error.message });
@@ -379,12 +424,48 @@ const retryWrongAnswers = async (req, res) => {
     }
 };
 
+const getQuestionsSummaryAll = async (req, res) => {
+    try {
+        // Hanya fetch 'subject' dan 'week' untuk menghemat bandwidth server & memory
+        const { data, error } = await supabase.from('questions').select('subject, week');
+        if (error) throw error;
+
+        // Ekspektasi Format: { "1": { "tajwid": 9, "fiqih": 5, "tauhid": 4 }, "2": { ... } }
+        const summary = {};
+        
+        if (data) {
+            data.forEach(q => {
+                const w = q.week;
+                const s = q.subject;
+                
+                // Jika minggu ini belum ada di object summary, inisialisasi
+                if (!summary[w]) {
+                    summary[w] = { tajwid: 0, fiqih: 0, tauhid: 0 };
+                }
+                
+                // Tambahkan hitungan soal untuk mapel tersebut
+                if (summary[w][s] !== undefined) {
+                    summary[w][s]++;
+                } else {
+                    summary[w][s] = 1; // Jaga-jaga jika ada mapel lain
+                }
+            });
+        }
+        
+        res.status(200).json({ status: "success", data: summary });
+    } catch (error) {
+        console.error("Get Summary All Error:", error.message);
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
 module.exports = {
     saveParsedQuestions,
     updateQuestion,
     deleteQuestion,
     getQuestions,
     getQuestionsSummary,
+    getQuestionsSummaryAll,
     getAvailableWeeks,
     getCompletionStatus,
     submitAndGradeAnswers,

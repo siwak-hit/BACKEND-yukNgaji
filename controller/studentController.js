@@ -499,6 +499,89 @@ const getStudentsWithStats = async (req, res) => {
     }
 };
 
+// ===============================================
+// FUNGSI BARU: AMBIL RIWAYAT POIN & GAMIFIKASI
+// ===============================================
+const getPointHistory = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { limit = 10, days = 'all' } = req.query; // Ambil filter dari URL
+
+        // 1. Set Batas Waktu Filter
+        let dateThreshold = null;
+        if (days !== 'all') {
+            const d = new Date();
+            d.setDate(d.getDate() - parseInt(days));
+            dateThreshold = d.toISOString();
+        }
+
+        // 2. Query Data Ujian
+        let examQuery = supabase.from('onboarding_results')
+            .select('created_at, subject, week, score, notes')
+            .eq('student_id', id);
+        if (dateThreshold) examQuery = examQuery.gte('created_at', dateThreshold);
+        const { data: exams } = await examQuery.order('created_at', { ascending: false }).limit(parseInt(limit));
+
+        // 3. Query Log Gamifikasi
+        let logQuery = supabase.from('gamification_logs')
+            .select('created_at, action_type, point_change, actor_id, target_id')
+            .or(`actor_id.eq.${id},target_id.eq.${id}`);
+        if (dateThreshold) logQuery = logQuery.gte('created_at', dateThreshold);
+        const { data: logs } = await logQuery.order('created_at', { ascending: false }).limit(parseInt(limit));
+
+        const { data: allStudents } = await supabase.from('students').select('id, name');
+
+        // TANGGAL LAUNCH FITUR (Poin sebelum tanggal ini akan di-abu-abu-kan)
+        const LAUNCH_DATE = new Date('2026-04-28T00:00:00Z');
+
+        let history = [];
+        // [Mapping Ujian]
+        if (exams) {
+            exams.forEach(ex => {
+                const itemDate = new Date(ex.created_at);
+                history.push({
+                    id: `exam_${ex.created_at}`,
+                    date: itemDate,
+                    isLegacy: itemDate < LAUNCH_DATE,
+                    title: `Ujian ${ex.subject} (W${ex.week})`,
+                    points: `+${ex.score}`,
+                    isPositive: true,
+                    icon: (ex.notes && ex.notes.includes('Sihir')) ? '✨' : '🎓'
+                });
+            });
+        }
+
+        // [Mapping Log Gamifikasi]
+        if (logs) {
+            logs.forEach(log => {
+                const itemDate = new Date(log.created_at);
+                let title = ""; let isPositive = false; let pts = ""; let icon = "";
+                
+                if (log.actor_id === id && log.action_type === 'serang_berhasil') {
+                    const t = allStudents?.find(s => s.id === log.target_id);
+                    title = `Curi poin dari ${t ? t.name : 'Teman'}`; isPositive = true; pts = `+${log.point_change}`; icon = '⚔️';
+                } else if (log.target_id === id && log.action_type === 'serang_berhasil') {
+                    const a = allStudents?.find(s => s.id === log.actor_id);
+                    title = `Dicuri oleh ${a ? a.name : 'Teman'}`; isPositive = false; pts = `-${log.point_change}`; icon = '😱';
+                } else if (log.actor_id === id && log.action_type === 'beli_item') {
+                    title = `Beli Item Toko`; isPositive = false; pts = `-${log.point_change}`; icon = '🛍️';
+                } else if (log.actor_id === id && log.action_type === 'bonus_welcome') {
+                    title = `Bonus Modal Awal`; isPositive = true; pts = `+${log.point_change}`; icon = '🎁';
+                }
+
+                if (title) {
+                    history.push({ id: `log_${log.created_at}`, date: itemDate, isLegacy: itemDate < LAUNCH_DATE, title, points: pts, isPositive, icon });
+                }
+            });
+        }
+
+        history.sort((a, b) => b.date - a.date);
+        res.status(200).json({ status: "success", data: history.slice(0, parseInt(limit)) });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
 module.exports = { 
     addStudent, 
     getAllStudents, 
@@ -514,5 +597,6 @@ module.exports = {
     uploadGalleryPhoto,
     deleteStudentPhoto,
     getLatestStudentPhoto,
-    getStudentsWithStats
+    getStudentsWithStats,
+    getPointHistory
 };
