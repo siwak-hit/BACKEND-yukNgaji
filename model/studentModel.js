@@ -10,7 +10,8 @@ const createStudent = async (studentData) => {
 const getStudentsByTeacher = async (teacherUsername) => {
     const { data, error } = await supabase
         .from('students')
-        .select('id, name, grade, poin, item_double_score, item_serang, item_perisai, item_extra_life, is_shield_active, current_surah_id, current_ayah, has_infaq_can')
+        // TAMBAHAN: shield_activated_at
+        .select('id, name, grade, poin, item_double_score, item_serang, item_perisai, item_extra_life, is_shield_active, shield_activated_at, current_surah_id, current_ayah, has_infaq_can')
         .eq('created_by', teacherUsername)
         .order('name', { ascending: true });
     if (error) throw error;
@@ -21,7 +22,8 @@ const getStudentsByTeacher = async (teacherUsername) => {
 const getStudentById = async (id, teacherUsername) => {
     const { data, error } = await supabase
         .from('students')
-        .select('id, name, grade, poin, has_claimed_bonus, item_double_score, item_serang, item_perisai, item_extra_life, is_shield_active, current_surah_id, current_ayah, has_infaq_can, last_can_received_at')
+        // TAMBAHAN: shield_activated_at
+        .select('id, name, grade, poin, has_claimed_bonus, item_double_score, item_serang, item_perisai, item_extra_life, is_shield_active, shield_activated_at, current_surah_id, current_ayah, has_infaq_can, last_can_received_at')
         .eq('id', id)
         .eq('created_by', teacherUsername)
         .single();

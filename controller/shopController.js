@@ -33,11 +33,13 @@ const buyItem = async (req, res) => {
         const { error: updateError } = await supabase.from('students').update(updatedData).eq('id', student_id);
         if (updateError) throw updateError;
 
+        // [UPDATE KUNCI]: Masukkan nama item ke dalam kolom JSONB metadata
         await supabase.from('gamification_logs').insert([{
             actor_id: student_id,
             action_type: 'beli_item',
             point_change: finalPrice,
-            is_read: true // Otomatis terbaca karena dilakukan sendiri
+            is_read: true, // Otomatis terbaca karena dilakukan sendiri
+            metadata: { item_type: item_type } // <--- Simpan identitas item di sini
         }]);
 
         res.status(200).json({ status: "success", message: "Berhasil membeli item!", data: updatedData });
@@ -63,8 +65,11 @@ const useItem = async (req, res) => {
         // Kurangi 1 dari tas
         const updatedData = { [item_type]: student[item_type] - 1 };
 
-        // Nyalakan perlindungan jika itu perisai
-        if (item_type === 'item_perisai') updatedData.is_shield_active = true;
+        // Nyalakan perlindungan & catat waktu diaktifkannya untuk Midnight Reset
+        if (item_type === 'item_perisai') {
+            updatedData.is_shield_active = true;
+            updatedData.shield_activated_at = new Date().toISOString(); 
+        }
 
         const { error: updateError } = await supabase.from('students').update(updatedData).eq('id', student_id);
         if (updateError) throw updateError;
@@ -82,7 +87,7 @@ const attackFriend = async (req, res) => {
 
         const { data: users, error: fetchError } = await supabase
             .from('students')
-            .select('id, name, poin, item_serang, is_shield_active') // [UPDATE]: Cek kolom is_shield_active
+            .select('id, name, poin, item_serang, is_shield_active, shield_activated_at') 
             .in('id', [actor_id, target_id]);
 
         if (fetchError || users.length !== 2) return res.status(400).json({ status: "error", message: "Data pemain tidak valid." });
@@ -95,12 +100,23 @@ const attackFriend = async (req, res) => {
         let targetPoinLompat = 50; 
         let message = "";
         let actionType = "";
+        let newActorPoin = actor.poin; 
 
-        // Skenario A: Target punya perisai (PERISAI KEBAL & TIDAK HANCUR)
-        if (target.is_shield_active) {
-            // Amunisi penyerang hangus, tapi perisai target tetap ada
+        // --- VALIDASI "MIDNIGHT RESET" ---
+        let isTargetShielded = target.is_shield_active;
+        const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+
+        if (isTargetShielded && target.shield_activated_at) {
+            const targetDateStr = new Date(target.shield_activated_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+            if (targetDateStr !== todayStr) {
+                isTargetShielded = false; 
+                await supabase.from('students').update({ is_shield_active: false, shield_activated_at: null }).eq('id', target_id);
+            }
+        }
+
+        // Skenario A: Target punya perisai aktif
+        if (isTargetShielded) {
             await supabase.from('students').update({ item_serang: actor.item_serang - 1 }).eq('id', actor_id);
-            
             message = `Serangan gagal! ${target.name} sedang dilindungi Perisai Sihir.`;
             actionType = 'serang_ditahan';
             targetPoinLompat = 0;
@@ -108,16 +124,23 @@ const attackFriend = async (req, res) => {
         // Skenario B: Target rentan (Berhasil dicuri)
         else {
             const poinHilang = Math.min(target.poin, targetPoinLompat); 
+            newActorPoin = actor.poin + poinHilang;
             
-            await supabase.from('students').update({ item_serang: actor.item_serang - 1, poin: actor.poin + poinHilang }).eq('id', actor_id);
+            await supabase.from('students').update({ item_serang: actor.item_serang - 1, poin: newActorPoin }).eq('id', actor_id);
             await supabase.from('students').update({ poin: target.poin - poinHilang }).eq('id', target_id);
 
             message = `Serangan berhasil! Kamu mencuri ${poinHilang} poin dari ${target.name}.`;
             actionType = 'serang_berhasil';
         }
 
-        await supabase.from('gamification_logs').insert([{ actor_id, target_id, action_type: actionType, point_change: targetPoinLompat }]);
-        res.status(200).json({ status: "success", message });
+        await supabase.from('gamification_logs').insert([{ 
+            actor_id, 
+            target_id, 
+            action_type: actionType, 
+            point_change: targetPoinLompat 
+        }]);
+        
+        res.status(200).json({ status: "success", message, data: { new_poin: newActorPoin } });
 
     } catch (error) {
         res.status(500).json({ status: "error", message: error.message });
@@ -134,16 +157,35 @@ const getPeers = async (req, res) => {
 
         const { data: peers, error } = await supabase
             .from('students')
-            .select('id, name, is_shield_active') // [UPDATE]: Tarik is_shield_active
+            .select('id, name, poin, is_shield_active, shield_activated_at') 
             .eq('created_by', teacherUsername)
             .neq('id', student_id);
 
         if (error) throw error;
 
-        const formattedPeers = peers.map(p => ({
-            id: p.id,
-            name: p.name,
-            has_shield: p.is_shield_active // [UPDATE]: Set status dari is_shield_active
+        const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+
+        const formattedPeers = await Promise.all(peers.map(async (p) => {
+            let has_shield = p.is_shield_active;
+
+            // --- LAZY RESET CHECK ---
+            if (has_shield && p.shield_activated_at) {
+                const shieldDateStr = new Date(p.shield_activated_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+                if (shieldDateStr !== todayStr) {
+                    has_shield = false; 
+                    await supabase.from('students').update({ 
+                        is_shield_active: false, 
+                        shield_activated_at: null 
+                    }).eq('id', p.id);
+                }
+            }
+
+            return {
+                id: p.id,
+                name: p.name,
+                poin: p.poin, 
+                has_shield: has_shield 
+            };
         }));
 
         res.status(200).json({ status: "success", data: formattedPeers });

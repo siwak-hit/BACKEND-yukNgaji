@@ -47,6 +47,24 @@ const getStudent = async (req, res) => {
             return res.status(404).json({ status: "error", message: "Siswa tidak ditemukan atau Anda tidak memiliki akses" });
         }
 
+        // --- LAZY RESET PERISAI (MIDNIGHT RESET) ---
+        if (student.is_shield_active && student.shield_activated_at) {
+            const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+            const shieldDateStr = new Date(student.shield_activated_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+            
+            // Jika tanggal aktifnya bukan hari ini (sudah ganti hari)
+            if (todayStr !== shieldDateStr) {
+                student.is_shield_active = false;
+                student.shield_activated_at = null;
+                // Matikan di database
+                await supabase.from('students').update({ 
+                    is_shield_active: false, 
+                    shield_activated_at: null 
+                }).eq('id', student.id);
+            }
+        }
+        // -------------------------------------------
+
         res.status(200).json({ status: "success", data: student });
     } catch (error) {
         res.status(500).json({ status: "error", message: error.message });
@@ -505,77 +523,82 @@ const getStudentsWithStats = async (req, res) => {
 const getPointHistory = async (req, res) => {
     try {
         const { id } = req.params;
-        const { limit = 10, days = 'all' } = req.query; // Ambil filter dari URL
+        const { limit = 10, days = 'all' } = req.query;
 
-        // 1. Set Batas Waktu Filter
-        let dateThreshold = null;
+        let query = supabase.from('gamification_logs').select('*').or(`actor_id.eq.${id},target_id.eq.${id}`);
         if (days !== 'all') {
-            const d = new Date();
-            d.setDate(d.getDate() - parseInt(days));
-            dateThreshold = d.toISOString();
+            const dateLimit = new Date();
+            dateLimit.setDate(dateLimit.getDate() - parseInt(days));
+            query = query.gte('created_at', dateLimit.toISOString());
         }
 
-        // 2. Query Data Ujian
-        let examQuery = supabase.from('onboarding_results')
-            .select('created_at, subject, week, score, notes')
-            .eq('student_id', id);
-        if (dateThreshold) examQuery = examQuery.gte('created_at', dateThreshold);
-        const { data: exams } = await examQuery.order('created_at', { ascending: false }).limit(parseInt(limit));
+        const { data: logs, error } = await query.order('created_at', { ascending: false });
+        if (error) throw error;
 
-        // 3. Query Log Gamifikasi
-        let logQuery = supabase.from('gamification_logs')
-            .select('created_at, action_type, point_change, actor_id, target_id')
-            .or(`actor_id.eq.${id},target_id.eq.${id}`);
-        if (dateThreshold) logQuery = logQuery.gte('created_at', dateThreshold);
-        const { data: logs } = await logQuery.order('created_at', { ascending: false }).limit(parseInt(limit));
+        const allStudents = await studentModel.getStudentsByTeacher(req.user.username);
+        const history = [];
 
-        const { data: allStudents } = await supabase.from('students').select('id, name');
-
-        // TANGGAL LAUNCH FITUR (Poin sebelum tanggal ini akan di-abu-abu-kan)
-        const LAUNCH_DATE = new Date('2026-04-28T00:00:00Z');
-
-        let history = [];
-        // [Mapping Ujian]
-        if (exams) {
-            exams.forEach(ex => {
-                const itemDate = new Date(ex.created_at);
-                history.push({
-                    id: `exam_${ex.created_at}`,
-                    date: itemDate,
-                    isLegacy: itemDate < LAUNCH_DATE,
-                    title: `Ujian ${ex.subject} (W${ex.week})`,
-                    points: `+${ex.score}`,
-                    isPositive: true,
-                    icon: (ex.notes && ex.notes.includes('Sihir')) ? '✨' : '🎓'
-                });
-            });
-        }
-
-        // [Mapping Log Gamifikasi]
         if (logs) {
             logs.forEach(log => {
+                let title = ""; let isPositive = true; let pts = ""; let icon = "💰";
                 const itemDate = new Date(log.created_at);
-                let title = ""; let isPositive = false; let pts = ""; let icon = "";
                 
-                if (log.actor_id === id && log.action_type === 'serang_berhasil') {
-                    const t = allStudents?.find(s => s.id === log.target_id);
-                    title = `Curi poin dari ${t ? t.name : 'Teman'}`; isPositive = true; pts = `+${log.point_change}`; icon = '⚔️';
-                } else if (log.target_id === id && log.action_type === 'serang_berhasil') {
+                // MAPPING DESKRIPSI BERDASARKAN TIPE AKSI
+                // MAPPING DESKRIPSI BERDASARKAN TIPE AKSI
+                if (log.action_type === 'beli_item' || log.action_type.startsWith('beli_item')) {
+                    let itemName = "Item Toko"; 
+                    
+                    // [HACK]: Tebak nama item dari jumlah poin yang terpotong (karena harga tiap item unik)
+                    const price = Math.abs(log.point_change);
+                    if (price === 50) itemName = 'Sihir Double Poin ✨';
+                    else if (price === 75) itemName = 'Perisai 🛡️';
+                    else if (price === 100) itemName = 'Pedang Serang ⚔️';
+                    else if (price === 150) itemName = 'Extra Life 💖';
+
+                    // Jaga-jaga kalau lu tetep pake format action_type: 'beli_item_perisai' di data baru
+                    if (log.action_type.includes('perisai')) itemName = 'Perisai 🛡️';
+                    else if (log.action_type.includes('serang')) itemName = 'Pedang Serang ⚔️';
+                    else if (log.action_type.includes('double_score')) itemName = 'Sihir Double Poin ✨';
+                    else if (log.action_type.includes('extra_life')) itemName = 'Extra Life 💖';
+
+                    title = `Kamu membeli item <strong>${itemName}</strong>`;
+                    isPositive = false; 
+                    pts = `-${price}`; 
+                    icon = '🛍️';
+                }
+                else if (log.action_type === 'serang_berhasil') {
+                    if (log.actor_id === id) {
+                        const t = allStudents?.find(s => s.id === log.target_id);
+                        title = `Pedang Tajam! Kamu berhasil mencuri poin dari <strong>${t ? t.name : 'Teman'}</strong> ⚔️`;
+                        isPositive = true; pts = `+${log.point_change}`; icon = '🔥';
+                    } else {
+                        const a = allStudents?.find(s => s.id === log.actor_id);
+                        title = `Aduh! Poinmu diambil <strong>${a ? a.name : 'Seseorang'}</strong> sebanyak <strong>${log.point_change}</strong>! 😱`;
+                        isPositive = false; pts = `-${log.point_change}`; icon = '💔';
+                    }
+                }
+                else if (log.action_type === 'serang_ditahan') {
                     const a = allStudents?.find(s => s.id === log.actor_id);
-                    title = `Dicuri oleh ${a ? a.name : 'Teman'}`; isPositive = false; pts = `-${log.point_change}`; icon = '😱';
-                } else if (log.actor_id === id && log.action_type === 'beli_item') {
-                    title = `Beli Item Toko`; isPositive = false; pts = `-${log.point_change}`; icon = '🛍️';
-                } else if (log.actor_id === id && log.action_type === 'bonus_welcome') {
-                    title = `Bonus Modal Awal`; isPositive = true; pts = `+${log.point_change}`; icon = '🎁';
+                    title = `Perisai Aktif! Serangan <strong>${a ? a.name : 'Seseorang'}</strong> berhasil ditahan. Aman! 🛡️`;
+                    isPositive = true; pts = "0"; icon = '🛡️';
+                }
+                else if (log.action_type === 'tugas_selesai' || log.action_type === 'onboarding_result') {
+                    const subject = log.metadata?.subject || "Tugas";
+                    const week = log.metadata?.week || "?";
+                    title = `Hore! Kamu dapat poin dari tugas <strong>${subject} Mg-${week}</strong>`;
+                    isPositive = true; pts = `+${log.point_change}`; icon = '⭐';
+                }
+                else if (log.action_type === 'bonus_welcome') {
+                    title = `Bonus modal awal khusus buat kamu! 🎁`;
+                    isPositive = true; pts = `+${log.point_change}`; icon = '🎁';
                 }
 
                 if (title) {
-                    history.push({ id: `log_${log.created_at}`, date: itemDate, isLegacy: itemDate < LAUNCH_DATE, title, points: pts, isPositive, icon });
+                    history.push({ id: log.id, date: itemDate, title, points: pts, isPositive, icon });
                 }
             });
         }
 
-        history.sort((a, b) => b.date - a.date);
         res.status(200).json({ status: "success", data: history.slice(0, parseInt(limit)) });
     } catch (error) {
         res.status(500).json({ status: "error", message: error.message });
