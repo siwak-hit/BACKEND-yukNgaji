@@ -28,4 +28,9 @@ router.post('/retry', onboardingController.retryWrongAnswers);
 router.post('/generate-pr-link', generatePRLink);
 router.get('/leaderboard-pr', onboardingController.getPRLeaderboard);
 
+router.post('/pr-lock', onboardingController.togglePRLock);
+router.get('/pr-locks/:subject', onboardingController.getPRLocks);
+
+router.post('/upload-satpam', onboardingController.uploadSatpamPhoto);
+
 module.exports = router;

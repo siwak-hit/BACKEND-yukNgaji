@@ -605,6 +605,17 @@ const getPointHistory = async (req, res) => {
     }
 };
 
+const getSatpamLogs = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { data, error } = await supabase.from('satpam_logs').select('photo_url').eq('student_id', id);
+        if (error) throw error;
+        res.status(200).json({ status: 'success', data });
+    } catch (error) {
+        res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+
 module.exports = { 
     addStudent, 
     getAllStudents, 
@@ -621,5 +632,6 @@ module.exports = {
     deleteStudentPhoto,
     getLatestStudentPhoto,
     getStudentsWithStats,
-    getPointHistory
+    getPointHistory,
+    getSatpamLogs
 };

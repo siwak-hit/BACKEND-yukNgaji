@@ -520,6 +520,84 @@ const getQuestionsSummaryAll = async (req, res) => {
     }
 };
 
+// =======================================================
+// FITUR GEMBOK PR
+// =======================================================
+const togglePRLock = async (req, res) => {
+    try {
+        const { subject, week, is_locked } = req.body;
+        if (is_locked) {
+            // Kalau digembok, simpan/timpa ke database
+            const { error } = await supabase.from('pr_locks').upsert(
+                { subject, week: parseInt(week) }, 
+                { onConflict: 'subject, week' }
+            );
+            if (error) throw error;
+        } else {
+            // Kalau gembok dibuka, hapus dari database
+            const { error } = await supabase.from('pr_locks').delete().match({ subject, week: parseInt(week) });
+            if (error) throw error;
+        }
+        res.status(200).json({ status: 'success', message: 'Status PR diperbarui' });
+    } catch (err) {
+        res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+const getPRLocks = async (req, res) => {
+    try {
+        const { subject } = req.params;
+        const { data, error } = await supabase.from('pr_locks').select('week').eq('subject', subject);
+        if (error) throw error;
+        
+        // Return array [1, 3] (misal minggu 1 dan 3 digembok)
+        res.status(200).json({ status: 'success', data: data.map(d => d.week) });
+    } catch (err) {
+        res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// =======================================================
+// FITUR UPLOAD FOTO SATPAM
+// =======================================================
+const uploadSatpamPhoto = async (req, res) => {
+    try {
+        // [UPDATE] Tangkap student_name dari Frontend
+        const { student_id, student_name, subject, week, image } = req.body;
+        if (!student_id || !image) return res.status(400).json({ status: "error", message: "Data tidak lengkap" });
+
+        const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
+        const buffer = Buffer.from(base64Data, 'base64');
+        
+        // [UPDATE] Format penamaan file sesuai request
+        // Hapus spasi dan karakter aneh dari nama biar URL-nya nggak rusak
+        const safeName = student_name ? student_name.replace(/[^a-zA-Z0-9]/g, '_') : 'Siswa';
+        const fileName = `PR_${safeName}_Pert_${week}_${student_id}.jpg`;
+
+        // Upload Buffer ke Supabase Storage
+        const { error: uploadErr } = await supabase.storage.from('satpam_faces').upload(fileName, buffer, {
+            contentType: 'image/jpeg',
+            upsert: true
+        });
+        // Ubah throw error-nya biar jelas
+        if (uploadErr) throw new Error(`[STORAGE ERROR] ${uploadErr.message}`);
+
+        const { data: publicUrlData } = supabase.storage.from('satpam_faces').getPublicUrl(fileName);
+        const publicUrl = publicUrlData.publicUrl;
+
+        const { error: dbError } = await supabase.from('satpam_logs').insert([{
+            student_id, subject, week: parseInt(week), photo_url: publicUrl
+        }]);
+        // Ubah throw error-nya biar jelas
+        if (dbError) throw new Error(`[DATABASE ERROR] ${dbError.message}`);
+
+        res.status(200).json({ status: "success", data: { url: publicUrl } });
+    } catch (error) {
+        console.error("Upload Satpam Error:", error.message);
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
 module.exports = {
     saveParsedQuestions,
     updateQuestion,
@@ -534,5 +612,8 @@ module.exports = {
     getStudentProgress,
     getReviewData,
     retryWrongAnswers,
-    getPRLeaderboard
+    getPRLeaderboard,
+    togglePRLock,
+    getPRLocks,
+    uploadSatpamPhoto
 };

@@ -59,6 +59,7 @@ router.post('/gallery/delete-photo', verifyToken, studentController.deleteStuden
 router.get('/:id/latest-photo', verifyToken, studentController.getLatestStudentPhoto);
 // Tambahkan baris ini
 router.get('/:id/point-history', verifyToken, studentController.getPointHistory);
+router.get('/:id/satpam-logs', studentController.getSatpamLogs);
 
 
 module.exports = router;
