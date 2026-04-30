@@ -172,7 +172,7 @@ const getCompletionStatus = async (req, res) => {
 const submitAndGradeAnswers = async (req, res) => {
     try {
         // [BARU] Tangkap is_double_score dari FE
-        const { student_id, subject, week, student_answers, is_double_score, is_extra_life_used } = req.body;
+        const { student_id, subject, week, student_answers, is_double_score, is_extra_life_used, is_pr, time_taken } = req.body;
 
         if (!student_id || !subject || !week || !student_answers) {
             return res.status(400).json({ status: "error", message: "Data pengerjaan tidak lengkap." });
@@ -261,7 +261,9 @@ const submitAndGradeAnswers = async (req, res) => {
                 score: finalScore, 
                 category,
                 student_answers, 
-                notes: isItemUsed ? "Koreksi Sihir ✨ (Double Poin Aktif)" : "Koreksi otomatis oleh sistem"
+                notes: isItemUsed ? "Koreksi Sihir ✨ (Double Poin Aktif)" : "Koreksi otomatis oleh sistem",
+                is_pr: is_pr || false,
+                time_taken: time_taken || 0
             }]);
 
         if (resultError) throw resultError;
@@ -316,6 +318,65 @@ const submitAndGradeAnswers = async (req, res) => {
     } catch (error) {
         console.error("Auto-Grade Error:", error.message);
         res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+const getPRLeaderboard = async (req, res) => {
+    try {
+        const { subject, week } = req.query;
+
+        // 1. Ambil SEMUA hasil di mapel & minggu ini (Hapus filter .eq('is_pr', true))
+        // [UPDATE] Tambahkan 'is_pr' ke dalam list .select()
+        const { data: results, error } = await supabase
+            .from('onboarding_results')
+            .select('student_id, score, created_at, time_taken, is_pr') 
+            .eq('subject', subject)
+            .eq('week', week);
+
+        if (error) throw error;
+        if (!results || results.length === 0) return res.status(200).json({ status: 'success', data: [] });
+
+        const { data: students } = await supabase.from('students').select('id, name');
+
+        // 2. Sortir waktu submit untuk fitur "Early Bird" (Siapa Cepat)
+        const sortedBySubmit = [...results].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+        // 3. Kalkulasi Poin Komposit
+        const leaderboard = results.map(r => {
+            const student = students.find(s => s.id === r.student_id);
+            const rawScore = r.score || 0;
+            const timeTaken = r.time_taken || 180; // Default 3 menit
+
+            // A. Bobot Nilai (80%) -> Max 80 Poin
+            const scorePoin = (rawScore / 100) * 80;
+
+            // B. Bobot Waktu (10%) -> Max 10 Poin (Makin cepet makin gede)
+            const maxTime = subject === 'tajwid' ? 105 : 180; 
+            let timePoin = ((maxTime - timeTaken) / maxTime) * 10;
+            if (timePoin < 0) timePoin = 0;
+
+            // C. Bobot Early Bird (10%) -> Anak pertama yg ngumpulin dpt 10, kedua 9, dst.
+            const submitRank = sortedBySubmit.findIndex(x => x.student_id === r.student_id);
+            const earlyPoin = Math.max(0, 10 - submitRank);
+
+            const compositeScore = (scorePoin + timePoin + earlyPoin).toFixed(1);
+
+            return {
+                student_id: r.student_id,
+                name: student ? student.name.split(' ')[0] : 'Unknown', // Ambil nama panggilan
+                raw_score: rawScore,
+                time_taken: timeTaken,
+                composite_score: parseFloat(compositeScore),
+                is_pr: r.is_pr || false // <--- [BARU] Lempar status PR ke Frontend
+            };
+        });
+
+        // Urutkan dari poin tertinggi ke terendah
+        leaderboard.sort((a, b) => b.composite_score - a.composite_score);
+
+        res.status(200).json({ status: 'success', data: leaderboard });
+    } catch (err) {
+        res.status(500).json({ status: 'error', message: err.message });
     }
 };
 
@@ -472,5 +533,6 @@ module.exports = {
     submitOnboarding,
     getStudentProgress,
     getReviewData,
-    retryWrongAnswers
+    retryWrongAnswers,
+    getPRLeaderboard
 };

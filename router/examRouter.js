@@ -1,10 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const examController = require('../controller/examController');
-const authMiddleware = require('../middleware/authMiddleware');
+const { verifyToken } = require('../middleware/authMiddleware');
 
 // Semua rute ujian wajib login
-router.use(authMiddleware);
+router.use(verifyToken);
 
 router.post('/', examController.createNewExam);
 router.get('/', examController.getExams);

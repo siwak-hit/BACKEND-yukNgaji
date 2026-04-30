@@ -1,13 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const authController = require('../controller/authController');
-const authMiddleware = require('../middleware/authMiddleware');
 
-// Public route for login
+// HANYA import verifyToken di sini
+const { verifyToken } = require('../middleware/authMiddleware');
+
 router.post('/login', authController.login);
 
-// Example of a protected route using the middleware
-router.get('/dashboard', authMiddleware, (req, res) => {
+router.get('/dashboard', verifyToken, (req, res) => {
     res.status(200).json({
         status: "success",
         message: "Selamat datang di dashboard guru",

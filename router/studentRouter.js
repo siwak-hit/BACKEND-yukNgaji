@@ -5,7 +5,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 const studentController = require('../controller/studentController');
 const onboardingController = require('../controller/onboardingController');
 const todoController = require('../controller/todoController');
-const authMiddleware = require('../middleware/authMiddleware');
+const { verifyToken } = require('../middleware/authMiddleware');
 const { getStudentLagStatus } = require('../controller/studentController');
 const {
     logMemorization,
@@ -15,10 +15,10 @@ const {
     getMemorizationLogs,
 } = require('../controller/memorizationController');
 
-router.use(authMiddleware);
+router.use(verifyToken);
 
 // Core student CRUD
-router.get('/stats/enriched', authMiddleware, studentController.getStudentsWithStats);
+router.get('/stats/enriched', verifyToken, studentController.getStudentsWithStats);
 router.post('/', studentController.addStudent);
 router.get('/', studentController.getAllStudents);
 router.get('/:id', studentController.getStudent);
@@ -29,36 +29,36 @@ router.delete('/:id', studentController.removeStudent);
 router.get('/:id/progress', onboardingController.getStudentProgress);
 router.get('/:id/todos', todoController.getStudentTodos);
 router.get('/:id/consultations', studentController.getStudentConsultations);
-router.get('/:id/review/:subject/:week', authMiddleware, onboardingController.getReviewData);
+router.get('/:id/review/:subject/:week', verifyToken, onboardingController.getReviewData);
 
 // Raports & Attendance
 router.get('/:id/raports', studentController.getStudentRaports);
 router.get('/:id/attendance', studentController.getStudentAttendance);
 
-router.patch('/:id/infaq-can', authMiddleware, studentController.toggleInfaqCan);
+router.patch('/:id/infaq-can', verifyToken, studentController.toggleInfaqCan);
 
 // Hafalan log
-router.post('/:id/memorization', authMiddleware, logMemorization);
+router.post('/:id/memorization', verifyToken, logMemorization);
 
 // Checkpoint student
-router.post('/:id/checkpoint',   authMiddleware, setCheckpoint);    // onboarding
-router.put('/:id/checkpoint',    authMiddleware, updateCheckpoint);  // edit manual
-router.delete('/:id/checkpoint', authMiddleware, resetCheckpoint);   // reset
+router.post('/:id/checkpoint',   verifyToken, setCheckpoint);    // onboarding
+router.put('/:id/checkpoint',    verifyToken, updateCheckpoint);  // edit manual
+router.delete('/:id/checkpoint', verifyToken, resetCheckpoint);   // reset
 
 // [PERBAIKAN KUNCI 1]: Pastikan TIDAK ADA kata "/students" di depan, karena sudah otomatis masuk dari index.js
-router.get('/:id/memorization-logs', authMiddleware, getMemorizationLogs);
+router.get('/:id/memorization-logs', verifyToken, getMemorizationLogs);
 
 // [PERBAIKAN KUNCI 2]: Pastikan rutenya benar-benar '/:id/lag-status' agar terhubung ke Frontend
-router.get('/:id/lag-status', authMiddleware, getStudentLagStatus);
+router.get('/:id/lag-status', verifyToken, getStudentLagStatus);
 
 
-router.get('/:id/gallery', authMiddleware, studentController.getStudentGallery);
-router.post('/:id/upload-photo', authMiddleware, upload.single('image'), studentController.uploadGalleryPhoto);
-router.post('/gallery/delete-photo', authMiddleware, studentController.deleteStudentPhoto);
+router.get('/:id/gallery', verifyToken, studentController.getStudentGallery);
+router.post('/:id/upload-photo', verifyToken, upload.single('image'), studentController.uploadGalleryPhoto);
+router.post('/gallery/delete-photo', verifyToken, studentController.deleteStudentPhoto);
 
-router.get('/:id/latest-photo', authMiddleware, studentController.getLatestStudentPhoto);
+router.get('/:id/latest-photo', verifyToken, studentController.getLatestStudentPhoto);
 // Tambahkan baris ini
-router.get('/:id/point-history', authMiddleware, studentController.getPointHistory);
+router.get('/:id/point-history', verifyToken, studentController.getPointHistory);
 
 
 module.exports = router;

@@ -1,9 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const shopController = require('../controller/shopController');
-const authMiddleware = require('../middleware/authMiddleware');
+const { verifyToken } = require('../middleware/authMiddleware');
 
-router.use(authMiddleware);
+router.use(verifyToken);
 
 router.post('/buy', shopController.buyItem);
 router.post('/use-item', shopController.useItem); // <-- [BARU] Endpoint Pakai Item

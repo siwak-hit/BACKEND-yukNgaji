@@ -1,10 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const aiController = require('../controller/aiController');
-const authMiddleware = require('../middleware/authMiddleware');
+const { verifyToken } = require('../middleware/authMiddleware');
 
 // Protect the endpoint
-router.use(authMiddleware);
+router.use(verifyToken);
 
 router.post('/recommendation', aiController.getRecommendation);
 

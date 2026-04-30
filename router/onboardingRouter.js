@@ -3,36 +3,29 @@ const router = express.Router();
 const multer = require('multer');
 const upload = multer({ dest: 'uploads/' }); 
 const onboardingController = require('../controller/onboardingController');
-const uploadController = require('../controller/uploadController'); // File yang baru diupdate
-const authMiddleware = require('../middleware/authMiddleware');
-const { 
-    getQuestionsSummary,
-    getQuestionsSummaryAll,
-    updateQuestion,
-    deleteQuestion,
-    retryWrongAnswers
-} = require('../controller/onboardingController');
+// const uploadController = require('../controller/uploadController'); 
 
-router.use(authMiddleware);
+// [PERBAIKAN KUNCI]: Import generatePRLink dari authMiddleware
+const { verifyToken, generatePRLink } = require('../middleware/authMiddleware');
 
-// Endpoint submission nilai siswa
+router.use(verifyToken);
+
 router.post('/', onboardingController.submitOnboarding);
-
-// Endpoint Guru upload template TXT bank soal
 router.post('/upload-template', onboardingController.saveParsedQuestions);
 router.post('/submit-grade', onboardingController.submitAndGradeAnswers);
 
-// RUTE GET PERLU DIURUTKAN DENGAN BENAR
-router.get('/questions/summary',        authMiddleware, getQuestionsSummary); 
-router.get('/questions/summary-all',    authMiddleware, getQuestionsSummaryAll); // <--- TAMBAHKAN BARIS INI
-router.put('/questions/:id',            authMiddleware, updateQuestion);
-router.delete('/questions/:id',         authMiddleware, deleteQuestion);
+router.get('/questions/summary',        onboardingController.getQuestionsSummary); 
+router.get('/questions/summary-all',    onboardingController.getQuestionsSummaryAll); 
+router.put('/questions/:id',            onboardingController.updateQuestion);
+router.delete('/questions/:id',         onboardingController.deleteQuestion);
 
-// Rute Dinamis Param /:subject (HARUS DI BAWAH SUMMARY)
 router.get('/questions/:subject', onboardingController.getQuestions);
 router.get('/available-weeks/:subject', onboardingController.getAvailableWeeks);
 router.get('/status', onboardingController.getCompletionStatus);
 router.post('/retry', onboardingController.retryWrongAnswers);
 
+// [PERBAIKAN KUNCI]: Panggil langsung generatePRLink (tanpa controller)
+router.post('/generate-pr-link', generatePRLink);
+router.get('/leaderboard-pr', onboardingController.getPRLeaderboard);
 
 module.exports = router;
