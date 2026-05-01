@@ -268,6 +268,18 @@ const submitAndGradeAnswers = async (req, res) => {
 
         if (resultError) throw resultError;
 
+        // Di dalam controller submit-grade lu:
+        if (is_pr) {
+            // Cari dulu nama siswanya dari ID
+            const { data: std } = await supabase.from('students').select('name').eq('id', student_id).single();
+            
+            // Masukin ke tabel notifikasi
+            await supabase.from('pr_notifications').insert([{ 
+                student_name: std ? std.name : 'Siswa', 
+                subject: subject 
+            }]);
+        }
+
         // =========================================================
         // --- LOGIKA PEMUSNAHAN PERISAI MASSAL (LANGKAH 5) ---
         // =========================================================
