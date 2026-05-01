@@ -213,6 +213,7 @@ const submitAndGradeAnswers = async (req, res) => {
 
         let finalScore = rawScore;
         let isItemUsed = false;
+        let notesArr = [];
 
         // 3. Terapkan Sihir Double Poin (JIKA DIA MEMINTA & JIKA DIA BENARAN PUNYA DI DB)
         if (is_double_score && studentInfo && studentInfo.item_double_score > 0) {
@@ -270,14 +271,33 @@ const submitAndGradeAnswers = async (req, res) => {
 
         // Di dalam controller submit-grade lu:
         if (is_pr) {
-            // Cari dulu nama siswanya dari ID
-            const { data: std } = await supabase.from('students').select('name').eq('id', student_id).single();
-            
-            // Masukin ke tabel notifikasi
-            await supabase.from('pr_notifications').insert([{ 
-                student_name: std ? std.name : 'Siswa', 
-                subject: subject 
-            }]);
+            const { data: prLock } = await supabase.from('pr_locks').select('*').eq('subject', subject).eq('week', week).single();
+            if (prLock && prLock.deadline_at) {
+                const now = new Date();
+                const originalDeadline = new Date(prLock.deadline_at);
+                
+                // Cari data dispensasi anak ini
+                let extRecord = null;
+                if (prLock.extended_students && Array.isArray(prLock.extended_students)) {
+                    extRecord = prLock.extended_students.find(ext => ext.student_id === student_id);
+                }
+
+                if (!extRecord) {
+                    // TIDAK PUNYA DISPENSASI -> Cek pakai deadline normal
+                    if (now > originalDeadline) {
+                        return res.status(403).json({ status: "error", message: "Waktu PR habis! Minta dispensasi ke Ustadz dulu ya." });
+                    }
+                } else {
+                    // PUNYA DISPENSASI -> Cek pakai deadline dispensasi
+                    const extDeadline = new Date(extRecord.until);
+                    if (now > extDeadline) {
+                        return res.status(403).json({ status: "error", message: "Waktu Dispensasi kamu juga sudah habis!" });
+                    }
+                    // Denda telat 10%
+                    finalScore = Math.floor(finalScore * 0.9);
+                    notesArr.push("⚠️ Denda Terlambat (Dispensasi): Nilai dipotong 10%");
+                }
+            }
         }
 
         // =========================================================
@@ -537,29 +557,52 @@ const getQuestionsSummaryAll = async (req, res) => {
 // =======================================================
 const togglePRLock = async (req, res) => {
     try {
-        const { subject, week, is_locked } = req.body;
-        if (is_locked) {
-            // Kalau digembok, simpan/timpa ke database
-            const { error } = await supabase.from('pr_locks').upsert(
-                { subject, week: parseInt(week) }, 
-                { onConflict: 'subject, week' }
-            );
-            if (error) throw error;
-        } else {
-            // Kalau gembok dibuka, hapus dari database
-            const { error } = await supabase.from('pr_locks').delete().match({ subject, week: parseInt(week) });
-            if (error) throw error;
-        }
-        res.status(200).json({ status: 'success', message: 'Status PR diperbarui' });
-    } catch (err) {
-        res.status(500).json({ status: 'error', message: err.message });
+        const { subject, week, is_locked, deadline_at } = req.body;
+        // Upsert data
+        const { error } = await supabase.from('pr_locks').upsert({ 
+            subject, 
+            week, 
+            is_locked,
+            deadline_at: deadline_at || null 
+        }, { onConflict: 'subject, week' });
+        
+        if (error) throw error;
+        res.status(200).json({ status: 'success' });
+    } catch (error) {
+        res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+
+const grantExtension = async (req, res) => {
+    try {
+        const { subject, week, student_id, extension_until } = req.body;
+        
+        const { data: pr } = await supabase.from('pr_locks').select('extended_students').eq('subject', subject).eq('week', week).single();
+        let extended = pr?.extended_students || [];
+        
+        // Bersihkan data lama jika anak ini pernah dikasih dispensasi
+        extended = extended.filter(ext => typeof ext === 'object' ? ext.student_id !== student_id : ext !== student_id);
+        
+        // Masukkan objek dispensasi baru (ID + Deadline)
+        extended.push({ student_id, until: extension_until });
+        
+        await supabase.from('pr_locks').update({ extended_students: extended }).eq('subject', subject).eq('week', week);
+        res.status(200).json({ status: 'success', message: 'Dispensasi diberikan!' });
+    } catch (error) {
+        res.status(500).json({ status: 'error', message: error.message });
     }
 };
 
 const getPRLocks = async (req, res) => {
     try {
         const { subject } = req.params;
-        const { data, error } = await supabase.from('pr_locks').select('week').eq('subject', subject);
+        // [FIX] Tambahkan pengecekan .eq('is_locked', true)
+        const { data, error } = await supabase
+            .from('pr_locks')
+            .select('week')
+            .eq('subject', subject)
+            .eq('is_locked', true);
+            
         if (error) throw error;
         
         // Return array [1, 3] (misal minggu 1 dan 3 digembok)
@@ -610,6 +653,35 @@ const uploadSatpamPhoto = async (req, res) => {
     }
 };
 
+// =======================================================
+// AMBIL DETAIL DEADLINE DAN DISPENSASI PR
+// =======================================================
+const getPRLockDetail = async (req, res) => {
+    try {
+        const { subject, week } = req.query;
+        
+        if (!subject || !week) {
+            return res.status(400).json({ status: "error", message: "Subject dan week wajib diisi" });
+        }
+
+        const { data, error } = await supabase
+            .from('pr_locks')
+            .select('deadline_at, extended_students')
+            .eq('subject', subject)
+            .eq('week', week)
+            .single();
+
+        // Abaikan error "PGRST116" (No rows returned) kalau datanya memang belum dibikin di database
+        if (error && error.code !== 'PGRST116') {
+            throw error;
+        }
+
+        res.status(200).json({ status: 'success', data: data || {} });
+    } catch (err) {
+        res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
 module.exports = {
     saveParsedQuestions,
     updateQuestion,
@@ -627,5 +699,7 @@ module.exports = {
     getPRLeaderboard,
     togglePRLock,
     getPRLocks,
-    uploadSatpamPhoto
+    uploadSatpamPhoto,
+    grantExtension,
+    getPRLockDetail
 };

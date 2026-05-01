@@ -32,5 +32,7 @@ router.post('/pr-lock', onboardingController.togglePRLock);
 router.get('/pr-locks/:subject', onboardingController.getPRLocks);
 
 router.post('/upload-satpam', onboardingController.uploadSatpamPhoto);
+router.post('/pr-extension', onboardingController.grantExtension);
+router.get('/pr-locks-detail', onboardingController.getPRLockDetail);
 
 module.exports = router;
