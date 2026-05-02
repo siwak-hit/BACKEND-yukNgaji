@@ -105,6 +105,41 @@ const logMemorization = async (req, res) => {
     }
 };
 
+// ========================================================
+// [BARU] ENDPOINT KHUSUS MUROJAAH
+// ========================================================
+const logMurojaah = async (req, res) => {
+    try {
+        const student_id = req.params.id; // Mengambil ID dari URL parameter
+        const { surah_name, total_ayahs } = req.body;
+
+        if (!student_id || !surah_name) {
+            return res.status(400).json({ status: 'error', message: 'Data tidak lengkap.' });
+        }
+
+        const todayDate = new Date().toISOString().split('T')[0];
+
+        // Langsung insert ke tabel log, nggak ngubah current_surah si anak
+        const { error } = await supabase.from('memorization_logs').upsert(
+            { 
+                student_id: student_id, 
+                date: todayDate, 
+                surah_name: surah_name, 
+                start_ayah: 1, 
+                end_ayah: total_ayahs || 0, 
+                added_ayahs: 0 
+            },
+            { onConflict: 'student_id,date,surah_name' }
+        );
+
+        if (error) throw error;
+
+        res.status(200).json({ status: 'success', message: 'Murojaah berhasil dicatat.' });
+    } catch (error) {
+        res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+
 const setCheckpoint = async (req, res) => {
     try {
         const { current_surah_id, current_ayah } = req.body;
@@ -135,7 +170,7 @@ const getMemorizationLogs = async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('memorization_logs')
-            .select('id, date, surah_name, start_ayah, end_ayah, added_ayahs') // [OPTIMASI]
+            .select('id, date, surah_name, start_ayah, end_ayah, added_ayahs')
             .eq('student_id', req.params.id)
             .order('date', { ascending: false })
             .limit(parseInt(req.query.limit || 30));
@@ -147,4 +182,5 @@ const getMemorizationLogs = async (req, res) => {
     }
 };
 
-module.exports = { logMemorization, setCheckpoint, updateCheckpoint, resetCheckpoint, getMemorizationLogs };
+// Ekspor semua module, termasuk logMurojaah
+module.exports = { logMemorization, logMurojaah, setCheckpoint, updateCheckpoint, resetCheckpoint, getMemorizationLogs };

@@ -13,6 +13,7 @@ const {
     updateCheckpoint,
     resetCheckpoint,
     getMemorizationLogs,
+    logMurojaah
 } = require('../controller/memorizationController');
 
 router.use(verifyToken);
@@ -61,5 +62,6 @@ router.get('/:id/latest-photo', verifyToken, studentController.getLatestStudentP
 router.get('/:id/point-history', verifyToken, studentController.getPointHistory);
 router.get('/:id/satpam-logs', studentController.getSatpamLogs);
 
+router.post('/:id/murojaah', logMurojaah);
 
 module.exports = router;

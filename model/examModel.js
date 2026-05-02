@@ -10,7 +10,8 @@ const createExam = async (examData) => {
 const getExamsByTeacher = async (username) => {
     const { data, error } = await supabase
         .from('exams')
-        .select('id, title, subject, duration_minutes, is_active, created_at') 
+        // [FIX] Tambahkan is_daring & deadline_at
+        .select('id, title, subject, duration_minutes, is_active, created_at, is_daring, deadline_at') 
         .eq('created_by', username)
         .order('created_at', { ascending: false });
     if (error) throw error;
@@ -21,7 +22,8 @@ const getExamsByTeacher = async (username) => {
 const getExamDetail = async (examId) => {
     const { data: exam, error: examErr } = await supabase
         .from('exams')
-        .select('id, title, subject, duration_minutes, is_active') 
+        // [FIX] Tambahkan is_daring & deadline_at
+        .select('id, title, subject, duration_minutes, is_active, is_daring, deadline_at') 
         .eq('id', examId)
         .single();
     if (examErr) throw examErr;

@@ -50,34 +50,25 @@ const getExamDetails = async (req, res) => {
 const saveAndPublishExam = async (req, res) => {
     try {
         const examId = req.params.id;
-        const { title, duration_minutes, is_active, questions } = req.body;
+        // [FIX] Ambil is_daring dan deadline_at dari body
+        const { title, duration_minutes, is_active, is_daring, deadline_at, questions } = req.body;
 
-        // Validasi: Jika ingin diaktifkan (publish), soal harus minimal 10
         if (is_active && (!questions || questions.length < 10)) {
-            return res.status(400).json({ 
-                status: "error", 
-                message: "Ujian tidak bisa diterbitkan. Minimal harus ada 10 soal!" 
-            });
+            return res.status(400).json({ status: "error", message: "Ujian tidak bisa diterbitkan. Minimal 10 soal!" });
         }
 
-        // Update pengaturan ujian
+        // [FIX] Masukkan is_daring dan deadline_at ke update
         await examModel.updateExam(examId, {
             title: title,
             duration_minutes: duration_minutes,
-            is_active: is_active
+            is_active: is_active,
+            is_daring: is_daring || false,
+            deadline_at: is_daring ? deadline_at : null
         });
 
-        // Simpan / Timpa seluruh daftar soal
         const savedQuestions = await examModel.saveExamQuestions(examId, questions);
-
-        res.status(200).json({ 
-            status: "success", 
-            message: is_active ? "Ujian berhasil diterbitkan!" : "Draft ujian berhasil disimpan.",
-            data: savedQuestions
-        });
-
+        res.status(200).json({ status: "success", message: "Berhasil disimpan!", data: savedQuestions });
     } catch (error) {
-        console.error("Save & Publish Error:", error);
         res.status(500).json({ status: "error", message: error.message });
     }
 };
@@ -107,26 +98,19 @@ const submitExamResult = async (req, res) => {
         // PROSES UPLOAD FOTO KAMERA (Jika Ada)
         if (capture_base64) {
             try {
-                // Bersihkan header base64
                 const base64Data = capture_base64.replace(/^data:image\/\w+;base64,/, "");
                 const buffer = Buffer.from(base64Data, 'base64');
                 const fileName = `capture_${examId}_${student_id}_${Date.now()}.jpg`;
 
-                // Upload ke bucket 'exam_captures'
                 const { data: uploadData, error: uploadError } = await supabase.storage
                     .from('exam_captures')
-                    .upload(fileName, buffer, {
-                        contentType: 'image/jpeg',
-                        upsert: true
-                    });
+                    .upload(fileName, buffer, { contentType: 'image/jpeg', upsert: true });
 
                 if (!uploadError) {
                     const { data: publicUrlData } = supabase.storage.from('exam_captures').getPublicUrl(fileName);
                     if (publicUrlData) capture_url = publicUrlData.publicUrl;
                 }
-            } catch (err) {
-                console.error("Gagal memproses foto kamera:", err);
-            }
+            } catch (err) { console.error("Gagal memproses foto kamera:", err); }
         }
 
         // Cek apakah siswa sudah pernah mengerjakan ujian ini
@@ -138,21 +122,36 @@ const submitExamResult = async (req, res) => {
             .single();
 
         if (existing) {
-            await supabase
-                .from('exam_results')
-                .update({ 
-                    score: score, 
-                    capture_url: capture_url || existing.capture_url, // Timpa foto jika ada foto baru
-                    created_at: new Date().toISOString() 
-                })
+            await supabase.from('exam_results')
+                .update({ score: score, capture_url: capture_url || existing.capture_url, created_at: new Date().toISOString() })
                 .eq('id', existing.id);
         } else {
-            await supabase
-                .from('exam_results')
+            await supabase.from('exam_results')
                 .insert([{ student_id, exam_id: examId, subject, score, capture_url }]);
         }
 
-        res.status(200).json({ status: "success", message: "Nilai dan foto ujian berhasil disimpan." });
+        // [FITUR BARU] CEK EASTER EGG (APAKAH SEMUA UJIAN AKTIF SUDAH SELESAI?)
+        const { count: totalActiveExams } = await supabase
+            .from('exams')
+            .select('*', { count: 'exact', head: true })
+            .eq('is_active', true);
+
+        const { data: studentResults } = await supabase
+            .from('exam_results')
+            .select('exam_id')
+            .eq('student_id', student_id);
+
+        // Hitung berapa ujian unik yang udah diselesaikan murid ini
+        const uniqueStudentExams = new Set(studentResults.map(r => r.exam_id)).size;
+        
+        // True jika murid sudah menyelesaikan ujian sebanyak/lebih dari total ujian aktif
+        const isAllCompleted = uniqueStudentExams >= totalActiveExams;
+
+        res.status(200).json({ 
+            status: "success", 
+            message: "Nilai dan foto ujian berhasil disimpan.",
+            is_all_completed: isAllCompleted // <--- Kirim sinyal rahasia ini ke Frontend!
+        });
     } catch (error) {
         res.status(500).json({ status: "error", message: error.message });
     }
