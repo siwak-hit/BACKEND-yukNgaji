@@ -300,6 +300,24 @@ const submitAndGradeAnswers = async (req, res) => {
             }
         }
 
+        // [BARU] 6. Buat Notifikasi jika ini adalah PR
+        if (is_pr) {
+            // Ambil nama anak dari info DB (karena dari body cuma student_id)
+            // Note: studentInfo sudah di-query di langkah sebelumnya, kita manfaatkan saja.
+            let studentNameStr = "Anak"; 
+            
+            // Query nama kalau studentInfo cuma ambil poin & item
+            const { data: stdNameData } = await supabase
+                .from('students').select('name').eq('id', student_id).single();
+            if(stdNameData) studentNameStr = stdNameData.name;
+
+            // Insert Notif
+            await supabase.from('pr_notifications').insert([{
+                student_name: studentNameStr,
+                subject: subject
+            }]);
+        }
+
         // =========================================================
         // --- LOGIKA PEMUSNAHAN PERISAI MASSAL (LANGKAH 5) ---
         // =========================================================
