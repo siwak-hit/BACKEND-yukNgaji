@@ -35,4 +35,7 @@ router.post('/upload-satpam', onboardingController.uploadSatpamPhoto);
 router.post('/pr-extension', onboardingController.grantExtension);
 router.get('/pr-locks-detail', onboardingController.getPRLockDetail);
 
+// Daftarin rute POST nya
+router.post('/transfer-reward',onboardingController.transferRewardCoin);
+
 module.exports = router;

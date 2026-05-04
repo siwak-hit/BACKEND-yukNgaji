@@ -321,7 +321,7 @@ const submitAndGradeAnswers = async (req, res) => {
         // =========================================================
         // --- LOGIKA PEMUSNAHAN PERISAI MASSAL (LANGKAH 5) ---
         // =========================================================
-        // 1. Ambil nama ustadz (created_by) dari siswa yang sedang submit
+        // 1. Ambil nama ustadz (created_by) dari siswa yang sedang submit 
         const { data: currentStudentData } = await supabase
             .from('students')
             .select('created_by')
@@ -700,6 +700,52 @@ const getPRLockDetail = async (req, res) => {
     }
 };
 
+// Fungsi untuk Guru memberi koin manual ke murid
+const transferRewardCoin = async (req, res) => {
+    try {
+        const { student_id, amount } = req.body;
+        
+        if (!student_id || !amount || amount <= 0) {
+            return res.status(400).json({ status: "error", message: "Data tidak valid" });
+        }
+
+        // 1. Ambil data poin murid saat ini
+        const { data: student, error: stdErr } = await supabase
+            .from('students')
+            .select('poin')
+            .eq('id', student_id)
+            .single();
+
+        if (stdErr) throw stdErr;
+
+        const newPoin = (student.poin || 0) + amount;
+
+        // 2. Tambahkan poin ke database murid
+        await supabase
+            .from('students')
+            .update({ poin: newPoin })
+            .eq('id', student_id);
+
+        // 3. Catat di history biar muncul di menu "Riwayat Poin" milik anak
+        await supabase
+            .from('gamification_logs')
+            .insert([{
+                target_id: student_id,
+                action_type: 'teacher_reward',
+                point_change: amount,
+                metadata: {
+                    title: `Mendapat bonus <strong>${amount} poin</strong> dari Ustadz! (Reward Keaktifan)`,
+                    icon: '🎁'
+                }
+            }]);
+
+        res.status(200).json({ status: "success", message: "Reward terkirim" });
+    } catch (error) {
+        console.error("Transfer Error:", error.message);
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
 module.exports = {
     saveParsedQuestions,
     updateQuestion,
@@ -719,5 +765,6 @@ module.exports = {
     getPRLocks,
     uploadSatpamPhoto,
     grantExtension,
-    getPRLockDetail
+    getPRLockDetail,
+    transferRewardCoin
 };
