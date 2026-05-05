@@ -746,6 +746,61 @@ const transferRewardCoin = async (req, res) => {
     }
 };
 
+// =======================================================
+// CEK APAKAH SISWA SUDAH PERNAH FOTO SATPAM
+// =======================================================
+const checkSatpamStatus = async (req, res) => {
+    try {
+        const { student_id, subject, week } = req.query;
+        
+        if (!student_id || !subject || !week) {
+            return res.status(400).json({ status: "error", message: "Parameter tidak lengkap" });
+        }
+
+        const { data, error } = await supabase
+            .from('satpam_logs')
+            .select('id')
+            .eq('student_id', student_id)
+            .eq('subject', subject)
+            .eq('week', week)
+            .single();
+
+        // Kalau errornya PGRST116 (No rows returned), berarti emang belum foto
+        if (error && error.code !== 'PGRST116') throw error;
+
+        // Kalau data ada, isScanned = true. Kalau nggak ada, false.
+        if (data) {
+            res.status(200).json({ status: 'success', isScanned: true });
+        } else {
+            res.status(200).json({ status: 'success', isScanned: false });
+        }
+    } catch (error) {
+        res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+
+// =======================================================
+// CEK STATUS MAINTENANCE SYSTEM
+// =======================================================
+const getSystemStatus = async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('app_settings')
+            .select('is_maintenance')
+            .eq('id', 1)
+            .single();
+
+        if (error) throw error;
+
+        res.status(200).json({ 
+            status: 'success', 
+            data: { is_maintenance: data.is_maintenance } 
+        });
+    } catch (error) {
+        res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+
 module.exports = {
     saveParsedQuestions,
     updateQuestion,
@@ -766,5 +821,7 @@ module.exports = {
     uploadSatpamPhoto,
     grantExtension,
     getPRLockDetail,
+    checkSatpamStatus,
+    getSystemStatus,
     transferRewardCoin
 };

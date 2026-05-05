@@ -37,5 +37,7 @@ router.get('/pr-locks-detail', onboardingController.getPRLockDetail);
 
 // Daftarin rute POST nya
 router.post('/transfer-reward',onboardingController.transferRewardCoin);
+router.get('/check-satpam', onboardingController.checkSatpamStatus);
+router.get('/system/status', onboardingController.getSystemStatus);
 
 module.exports = router;
