@@ -608,7 +608,12 @@ const getPointHistory = async (req, res) => {
 const getSatpamLogs = async (req, res) => {
     try {
         const { id } = req.params;
-        const { data, error } = await supabase.from('satpam_logs').select('photo_url').eq('student_id', id);
+        // [FIX] Tambahkan subject dan week di dalam select!
+        const { data, error } = await supabase
+            .from('satpam_logs')
+            .select('photo_url, subject, week') 
+            .eq('student_id', id);
+            
         if (error) throw error;
         res.status(200).json({ status: 'success', data });
     } catch (error) {
