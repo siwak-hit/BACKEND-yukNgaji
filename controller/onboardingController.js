@@ -229,10 +229,12 @@ const submitAndGradeAnswers = async (req, res) => {
         let category = 'C';
         if (finalScore >= 80) category = 'A';
         else if (finalScore >= 60) category = 'B';
+        const coinMultiplier = req.body.coin_multiplier || 1;
+        const poinRewardDikalikan = finalScore * coinMultiplier;
 
         // 4. Update Saldo Uang dan Kurangi Item jika dipakai
         if (studentInfo) {
-            let newPoin = studentInfo.poin + finalScore;
+            let newPoin = studentInfo.poin + poinRewardDikalikan;
             let newDoubleCount = studentInfo.item_double_score;
             let newExtraLifeCount = studentInfo.item_extra_life;
             
@@ -780,7 +782,7 @@ const checkSatpamStatus = async (req, res) => {
 };
 
 // =======================================================
-// CEK STATUS MAINTENANCE SYSTEM
+// CEK STATUS MAINTENANCE SYSTEM (GET)
 // =======================================================
 const getSystemStatus = async (req, res) => {
     try {
@@ -801,6 +803,31 @@ const getSystemStatus = async (req, res) => {
     }
 };
 
+// =======================================================
+// UBAH SAKLAR MAINTENANCE SYSTEM (POST)
+// =======================================================
+const updateSystemStatus = async (req, res) => {
+    try {
+        const { is_maintenance } = req.body;
+
+        if (is_maintenance === undefined) {
+            return res.status(400).json({ status: "error", message: "Parameter is_maintenance wajib diisi" });
+        }
+
+        const { error } = await supabase
+            .from('app_settings')
+            .update({ is_maintenance: is_maintenance })
+            .eq('id', 1);
+
+        if (error) throw error;
+
+        res.status(200).json({ status: "success", message: "Status sistem berhasil diperbarui" });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+// Jangan lupa update module.exports di paling bawah:
 module.exports = {
     saveParsedQuestions,
     updateQuestion,
@@ -822,6 +849,7 @@ module.exports = {
     grantExtension,
     getPRLockDetail,
     checkSatpamStatus,
+    transferRewardCoin,
     getSystemStatus,
-    transferRewardCoin
+    updateSystemStatus 
 };

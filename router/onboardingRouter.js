@@ -3,11 +3,16 @@ const router = express.Router();
 const multer = require('multer');
 const upload = multer({ dest: 'uploads/' }); 
 const onboardingController = require('../controller/onboardingController');
-// const uploadController = require('../controller/uploadController'); 
-
-// [PERBAIKAN KUNCI]: Import generatePRLink dari authMiddleware
 const { verifyToken, generatePRLink } = require('../middleware/authMiddleware');
 
+// =========================================================================
+// [FIX] PUBLIC ENDPOINT (Taruh di atas verifyToken biar gak kena 401)
+// =========================================================================
+router.get('/system/status', onboardingController.getSystemStatus);
+
+// =========================================================================
+// MIDDLEWARE AUTENTIKASI (Semua rute di bawah ini butuh token)
+// =========================================================================
 router.use(verifyToken);
 
 router.post('/', onboardingController.submitOnboarding);
@@ -24,7 +29,6 @@ router.get('/available-weeks/:subject', onboardingController.getAvailableWeeks);
 router.get('/status', onboardingController.getCompletionStatus);
 router.post('/retry', onboardingController.retryWrongAnswers);
 
-// [PERBAIKAN KUNCI]: Panggil langsung generatePRLink (tanpa controller)
 router.post('/generate-pr-link', generatePRLink);
 router.get('/leaderboard-pr', onboardingController.getPRLeaderboard);
 
@@ -35,9 +39,10 @@ router.post('/upload-satpam', onboardingController.uploadSatpamPhoto);
 router.post('/pr-extension', onboardingController.grantExtension);
 router.get('/pr-locks-detail', onboardingController.getPRLockDetail);
 
-// Daftarin rute POST nya
-router.post('/transfer-reward',onboardingController.transferRewardCoin);
+router.post('/transfer-reward', onboardingController.transferRewardCoin);
 router.get('/check-satpam', onboardingController.checkSatpamStatus);
-router.get('/system/status', onboardingController.getSystemStatus);
+
+// [BARU] Endpoint POST khusus Ustadz untuk ngubah saklar maintenance
+router.post('/system/status', onboardingController.updateSystemStatus);
 
 module.exports = router;

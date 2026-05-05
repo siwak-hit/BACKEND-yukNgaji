@@ -12,5 +12,6 @@ router.get('/peers', shopController.getPeers);
 router.get('/notifications', shopController.getAttackNotifications);
 router.post('/notifications/read', shopController.markNotificationsRead);
 router.post('/claim-bonus', shopController.claimWelcomeBonus);
+router.post('/purchase-effect', shopController.purchaseInstantEffect);
 
 module.exports = router;

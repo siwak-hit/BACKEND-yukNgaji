@@ -254,4 +254,40 @@ const claimWelcomeBonus = async (req, res) => {
     }
 };
 
-module.exports = { buyItem, useItem, attackFriend, getPeers, getAttackNotifications, markNotificationsRead, claimWelcomeBonus };
+const purchaseInstantEffect = async (req, res) => {
+    try {
+        const { student_id, effect_type, cost, target_id } = req.body;
+        
+        // 1. Cek Saldo
+        const { data: student, error: fetchError } = await supabase
+            .from('students')
+            .select('poin')
+            .eq('id', student_id)
+            .single();
+
+        if (fetchError || !student) throw fetchError;
+        if (student.poin < cost) return res.status(400).json({ status: "error", message: "Koin tidak cukup!" });
+
+        // 2. Potong Saldo
+        const newPoin = student.poin - cost;
+        const { error: updateError } = await supabase.from('students').update({ poin: newPoin }).eq('id', student_id);
+        if (updateError) throw updateError;
+
+        // 3. Catat di Log jika ini adalah Serangan Bully (biar notifnya kebaca di hp korban)
+        if (effect_type === 'bully' && target_id) {
+            await supabase.from('gamification_logs').insert([{ 
+                actor_id: student_id, 
+                target_id: target_id, 
+                action_type: 'bully', 
+                point_change: 0, // Bully nggak nyolong poin, cuma nyusahin doang
+                is_read: false 
+            }]);
+        }
+
+        res.status(200).json({ status: "success", data: { new_poin: newPoin } });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+module.exports = { buyItem, useItem, attackFriend, getPeers, getAttackNotifications, markNotificationsRead, claimWelcomeBonus, purchaseInstantEffect };
