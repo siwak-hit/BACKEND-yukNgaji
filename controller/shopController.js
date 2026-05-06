@@ -290,4 +290,46 @@ const purchaseInstantEffect = async (req, res) => {
     }
 };
 
-module.exports = { buyItem, useItem, attackFriend, getPeers, getAttackNotifications, markNotificationsRead, claimWelcomeBonus, purchaseInstantEffect };
+// FITUR JUAL ITEM
+const sellItem = async (req, res) => {
+    try {
+        const { student_id, item_type } = req.body;
+        const { data: student } = await supabase.from('students').select('*').eq('id', student_id).single();
+        
+        if (student[item_type] <= 0) return res.status(400).json({ status: "error", message: "Item tidak ditemukan." });
+
+        const sellPrice = Math.floor(ITEM_PRICES[item_type] / 2);
+        const newPoin = student.poin + sellPrice;
+
+        await supabase.from('students').update({ poin: newPoin, [item_type]: student[item_type] - 1 }).eq('id', student_id);
+        
+        res.status(200).json({ status: "success", message: `Berhasil dijual seharga ${sellPrice} koin`, data: { new_poin: newPoin } });
+    } catch (e) { res.status(500).json({ status: "error", message: e.message }); }
+};
+
+// FITUR HADIAHKAN ITEM
+const giftItem = async (req, res) => {
+    try {
+        const { actor_id, target_id, item_type } = req.body;
+        const price = ITEM_PRICES[item_type];
+
+        // 1. Potong Poin Pengirim
+        const { data: actor } = await supabase.from('students').select('poin').eq('id', actor_id).single();
+        if (actor.poin < price) return res.status(400).json({ status: "error", message: "Poin tidak cukup!" });
+        await supabase.from('students').update({ poin: actor.poin - price }).eq('id', actor_id);
+
+        // 2. Tambah Item Penerima
+        const { data: target } = await supabase.from('students').select(item_type).eq('id', target_id).single();
+        await supabase.from('students').update({ [item_type]: (target[item_type] || 0) + 1 }).eq('id', target_id);
+
+        // 3. Catat di Log biar muncul modal pas penerima buka ujian
+        await supabase.from('gamification_logs').insert([{ 
+            actor_id, target_id, action_type: 'gift', point_change: 0, is_read: false, 
+            metadata: { item_type: item_type, item_name: item_type.replace('item_', '').replace(/_/g, ' ') }
+        }]);
+
+        res.status(200).json({ status: "success", message: "Hadiah berhasil dikirim!", data: { new_poin: actor.poin - price } });
+    } catch (e) { res.status(500).json({ status: "error", message: e.message }); }
+};
+
+module.exports = { buyItem, useItem, attackFriend, getPeers, getAttackNotifications, markNotificationsRead, claimWelcomeBonus, purchaseInstantEffect, sellItem, giftItem };
