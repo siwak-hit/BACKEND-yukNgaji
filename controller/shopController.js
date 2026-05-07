@@ -304,25 +304,67 @@ const sellItem = async (req, res) => {
 const giftItem = async (req, res) => {
     try {
         const { actor_id, target_id, item_type } = req.body;
-        const price = ITEM_PRICES[item_type];
+        
+        // Pastikan harga item disesuaikan dengan konstanta kalian
+        const ITEM_PRICES = {
+            item_double_score: 50, item_serang: 100, item_perisai: 75,
+            item_extra_life: 150, item_tambah_waktu: 100, item_double_coin: 200,
+            item_triple_coin: 250, item_bullying: 50, item_diskon: 50
+        };
+        const price = ITEM_PRICES[item_type] || 0;
 
-        // 1. Potong Poin Pengirim
-        const { data: actor } = await supabase.from('students').select('poin').eq('id', actor_id).single();
+        if (price === 0) throw new Error("Item tidak valid.");
+
+        // 1. Ambil data Pengirim
+        const { data: actor, error: actorErr } = await supabase
+            .from('students')
+            .select('poin, name')
+            .eq('id', actor_id)
+            .single();
+
+        if (actorErr || !actor) throw new Error("Data pengirim tidak ditemukan.");
         if (actor.poin < price) return res.status(400).json({ status: "error", message: "Poin tidak cukup!" });
-        await supabase.from('students').update({ poin: actor.poin - price }).eq('id', actor_id);
 
-        // 2. Tambah Item Penerima
-        const { data: target } = await supabase.from('students').select(item_type).eq('id', target_id).single();
-        await supabase.from('students').update({ [item_type]: (target[item_type] || 0) + 1 }).eq('id', target_id);
+        // 2. Ambil data Penerima
+        const { data: target, error: targetErr } = await supabase
+            .from('students')
+            .select(`id, ${item_type}`)
+            .eq('id', target_id)
+            .single();
 
-        // 3. Catat di Log biar muncul modal pas penerima buka ujian
+        // [FIX ERROR] Tangkap error jika kolom gak ada di DB atau murid gak ketemu
+        if (targetErr) {
+            console.error("Target Query Error:", targetErr.message);
+            throw new Error(`Gagal akses data penerima. Pastikan kolom ${item_type} sudah ada di tabel students.`);
+        }
+        if (!target) throw new Error("Penerima tidak ditemukan.");
+
+        // 3. Eksekusi Update Saldo & Item
+        const newActorPoin = actor.poin - price;
+        const newTargetItemCount = (target[item_type] || 0) + 1;
+
+        await supabase.from('students').update({ poin: newActorPoin }).eq('id', actor_id);
+        await supabase.from('students').update({ [item_type]: newTargetItemCount }).eq('id', target_id);
+
+        // 4. Catat di Log biar muncul modal pas penerima buka ujian
+        const niceName = item_type.replace('item_', '').replace(/_/g, ' ').toUpperCase();
+        
+        // [IMPROVE] Masukkan attacker_name agar popup tau siapa yg ngirim
         await supabase.from('gamification_logs').insert([{ 
-            actor_id, target_id, action_type: 'gift', point_change: 0, is_read: false, 
-            metadata: { item_type: item_type, item_name: item_type.replace('item_', '').replace(/_/g, ' ') }
+            actor_id, 
+            target_id, 
+            action_type: 'gift', 
+            point_change: 0, 
+            is_read: false, 
+            attacker_name: actor.name, // <--- Ini penting biar nama pengirim muncul di UI penerima
+            metadata: { item_type: item_type, item_name: niceName }
         }]);
 
-        res.status(200).json({ status: "success", message: "Hadiah berhasil dikirim!", data: { new_poin: actor.poin - price } });
-    } catch (e) { res.status(500).json({ status: "error", message: e.message }); }
+        res.status(200).json({ status: "success", message: "Hadiah berhasil dikirim!", data: { new_poin: newActorPoin } });
+    } catch (e) { 
+        console.error("Error Gift:", e);
+        res.status(500).json({ status: "error", message: e.message }); 
+    }
 };
 
 module.exports = { buyItem, useItem, attackFriend, getPeers, getAttackNotifications, markNotificationsRead, claimWelcomeBonus, purchaseInstantEffect, sellItem, giftItem };
