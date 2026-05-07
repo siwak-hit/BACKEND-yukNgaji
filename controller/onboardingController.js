@@ -899,6 +899,63 @@ const getPeerHelp = async (req, res) => {
     }
 };
 
+// [BARU] CEK STATUS BULLY, RESET, DAN CARI PELAKUNYA LEWAT ACTOR_ID
+const checkAndResetBully = async (req, res) => {
+    try {
+        const { student_id } = req.query;
+
+        // 1. Ambil status is_bullied korban saat ini
+        const { data: student, error } = await supabase
+            .from('students')
+            .select('is_bullied, name')
+            .eq('id', student_id)
+            .single();
+
+        if (error || !student) throw new Error("Murid tidak ditemukan");
+
+        // 2. Jika sedang dibully, jalankan pelacakan!
+        if (student.is_bullied === true) {
+            
+            // Segera reset status di DB biar animasinya gak jalan berkali-kali
+            await supabase
+                .from('students')
+                .update({ is_bullied: false })
+                .eq('id', student_id);
+            
+            // [FIX PALING JITU] Cari tau ID pelaku dari log serangan terbaru
+            const { data: log } = await supabase
+                .from('gamification_logs')
+                .select('actor_id')
+                .eq('target_id', student_id)
+                .eq('action_type', 'bully')
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .single();
+
+            let attackerName = "Seseorang";
+
+            // Jika ketemu ID pelakunya, cari nama aslinya di tabel students!
+            if (log && log.actor_id) {
+                const { data: actor } = await supabase
+                    .from('students')
+                    .select('name')
+                    .eq('id', log.actor_id)
+                    .single();
+
+                if (actor && actor.name) {
+                    attackerName = actor.name.split(' ')[0]; // Ambil nama panggilannya aja
+                }
+            }
+            
+            // Beritahu frontend untuk jalanin aksi dan kirim nama asli pelakunya
+            return res.status(200).json({ status: "success", trigger_bully: true, attacker_name: attackerName });
+        }
+
+        res.status(200).json({ status: "success", trigger_bully: false });
+    } catch (e) {
+        res.status(500).json({ status: "error", message: e.message });
+    }
+};
 // Jangan lupa update module.exports di paling bawah:
 module.exports = {
     saveParsedQuestions,
@@ -924,5 +981,6 @@ module.exports = {
     transferRewardCoin,
     getSystemStatus,
     updateSystemStatus,
-    getPeerHelp
+    getPeerHelp,
+    checkAndResetBully
 };

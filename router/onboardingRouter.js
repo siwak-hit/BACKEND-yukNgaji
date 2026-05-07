@@ -46,4 +46,6 @@ router.get('/check-satpam', onboardingController.checkSatpamStatus);
 router.post('/system/status', onboardingController.updateSystemStatus);
 router.get('/peer-help', onboardingController.getPeerHelp);
 
+router.get('/check-bully-status', onboardingController.checkAndResetBully);
+
 module.exports = router;

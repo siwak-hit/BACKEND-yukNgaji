@@ -251,10 +251,10 @@ const purchaseInstantEffect = async (req, res) => {
     try {
         const { student_id, effect_type, cost, target_id } = req.body;
         
-        // 1. Cek Saldo
+        // 1. Ambil saldo DAN NAMA pengirim
         const { data: student, error: fetchError } = await supabase
             .from('students')
-            .select('poin')
+            .select('poin, name') // <--- [FIX] Ambil nama pengirim
             .eq('id', student_id)
             .single();
 
@@ -263,16 +263,20 @@ const purchaseInstantEffect = async (req, res) => {
 
         // 2. Potong Saldo
         const newPoin = student.poin - cost;
-        const { error: updateError } = await supabase.from('students').update({ poin: newPoin }).eq('id', student_id);
-        if (updateError) throw updateError;
+        await supabase.from('students').update({ poin: newPoin }).eq('id', student_id);
 
-        // 3. Catat di Log jika ini adalah Serangan Bully (biar notifnya kebaca di hp korban)
+        // 3. Eksekusi Bully & Catat Nama Pelaku
         if (effect_type === 'bully' && target_id) {
+            // Set status bullied di target
+            await supabase.from('students').update({ is_bullied: true }).eq('id', target_id);
+
+            // Simpan log lengkap dengan nama pelakunya
             await supabase.from('gamification_logs').insert([{ 
                 actor_id: student_id, 
                 target_id: target_id, 
                 action_type: 'bully', 
-                point_change: 0, // Bully nggak nyolong poin, cuma nyusahin doang
+                attacker_name: student.name, // <--- [FIX] Simpan nama di sini
+                point_change: 0, 
                 is_read: false 
             }]);
         }
