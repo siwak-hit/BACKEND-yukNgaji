@@ -150,48 +150,41 @@ const attackFriend = async (req, res) => {
 // 4. DAFTAR TEMAN UNTUK DISERANG
 const getPeers = async (req, res) => {
     try {
-        const { student_id } = req.query;
-        const teacherUsername = req.user.username; 
+        // Ambil query mode, subject, dan week yang dikirim dari Frontend
+        const { student_id, mode, subject, week } = req.query;
 
-        if (!student_id) return res.status(400).json({ status: "error", message: "student_id tidak ditemukan" });
-
-        const { data: peers, error } = await supabase
+        // 1. Ambil semua murid selain diri sendiri
+        let { data: peers, error } = await supabase
             .from('students')
-            .select('id, name, poin, is_shield_active, shield_activated_at') 
-            .eq('created_by', teacherUsername)
+            .select('id, name, poin, is_shield_active, item_perisai')
             .neq('id', student_id);
-
+        
         if (error) throw error;
 
-        const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
-
-        const formattedPeers = await Promise.all(peers.map(async (p) => {
-            let has_shield = p.is_shield_active;
-
-            // --- LAZY RESET CHECK ---
-            if (has_shield && p.shield_activated_at) {
-                const shieldDateStr = new Date(p.shield_activated_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
-                if (shieldDateStr !== todayStr) {
-                    has_shield = false; 
-                    await supabase.from('students').update({ 
-                        is_shield_active: false, 
-                        shield_activated_at: null 
-                    }).eq('id', p.id);
-                }
-            }
-
-            return {
-                id: p.id,
-                name: p.name,
-                poin: p.poin, 
-                has_shield: has_shield 
-            };
+        // 2. Format status perisai
+        peers = peers.map(p => ({
+            ...p,
+            has_shield: p.is_shield_active || p.item_perisai > 0
         }));
 
-        res.status(200).json({ status: "success", data: formattedPeers });
+        // 3. [FIX] Filter JIKA mode = 'khusus' (Hanya untuk PR ini yang belum selesai)
+        if (mode === 'khusus' && subject && week) {
+            // Cek siapa aja yang udah beres ngerjain PR subject & week ini
+            const { data: finished } = await supabase
+                .from('onboarding_results')
+                .select('student_id')
+                .eq('subject', subject)
+                .eq('week', week);
+            
+            const finishedIds = finished ? finished.map(f => f.student_id) : [];
+            
+            // Singkirkan mereka yang ID-nya ada di finishedIds
+            peers = peers.filter(p => !finishedIds.includes(p.id));
+        }
 
-    } catch (error) {
-        res.status(500).json({ status: "error", message: error.message });
+        res.status(200).json({ status: "success", data: peers });
+    } catch (e) {
+        res.status(500).json({ status: "error", message: e.message });
     }
 };
 

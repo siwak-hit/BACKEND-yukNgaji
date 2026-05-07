@@ -44,5 +44,6 @@ router.get('/check-satpam', onboardingController.checkSatpamStatus);
 
 // [BARU] Endpoint POST khusus Ustadz untuk ngubah saklar maintenance
 router.post('/system/status', onboardingController.updateSystemStatus);
+router.get('/peer-help', onboardingController.getPeerHelp);
 
 module.exports = router;

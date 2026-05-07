@@ -171,12 +171,28 @@ const getCompletionStatus = async (req, res) => {
 // 8. SIMPAN NILAI JAWABAN SISWA
 const submitAndGradeAnswers = async (req, res) => {
     try {
-        // [BARU] Tangkap is_double_score dari FE
         const { student_id, subject, week, student_answers, is_double_score, is_extra_life_used, is_pr, time_taken } = req.body;
 
         if (!student_id || !subject || !week || !student_answers) {
             return res.status(400).json({ status: "error", message: "Data pengerjaan tidak lengkap." });
         }
+
+        // =======================================================
+        // [FIX BUG DOUBLE SUBMIT] Cek apakah udah pernah ngumpulin
+        // =======================================================
+        const { data: existingSubmit } = await supabase
+            .from('onboarding_results')
+            .select('id')
+            .eq('student_id', student_id)
+            .eq('subject', subject)
+            .eq('week', parseInt(week))
+            .single();
+
+        // Kalau udah ada datanya, langsung tolak request-nya biar gak dobel!
+        if (existingSubmit) {
+            return res.status(400).json({ status: "error", message: "Tugas ini sudah pernah kamu kumpulkan sebelumnya!" });
+        }
+        // =======================================================
 
         const questionIds = student_answers.map(ans => ans.question_id);
 
@@ -827,6 +843,62 @@ const updateSystemStatus = async (req, res) => {
     }
 };
 
+// =======================================================
+// [BARU] FITUR TANYA TEMAN (Ambil data teman yang udah selesai)
+// =======================================================
+const getPeerHelp = async (req, res) => {
+    try {
+        const { subject, week, student_id } = req.query;
+        if (!subject || !week || !student_id) {
+            return res.status(400).json({ status: "error", message: "Parameter tidak lengkap." });
+        }
+
+        // 1. Ambil semua hasil dari murid lain untuk subject & week ini
+        const { data: results, error } = await supabase
+            .from('onboarding_results')
+            .select('student_id, student_answers')
+            .eq('subject', subject)
+            .eq('week', week)
+            .neq('student_id', student_id); // Jangan ambil jawaban sendiri!
+
+        if (error) throw error;
+        if (!results || results.length === 0) {
+            return res.status(200).json({ status: "success", data: [] });
+        }
+
+        // 2. Ambil data nama murid (hanya yang sudah ngerjain)
+        const peerIds = results.map(r => r.student_id);
+        const { data: students, error: stdErr } = await supabase
+            .from('students')
+            .select('id, name')
+            .in('id', peerIds);
+        
+        if (stdErr) throw stdErr;
+
+        // 3. Format data menjadi array flat biar frontend gampang nyocokkinnya
+        let peerAnswers = [];
+        results.forEach(r => {
+            const student = students.find(s => s.id === r.student_id);
+            const studentName = student ? student.name.split(' ')[0] : 'Teman'; // Ambil nama panggilan aja
+            
+            if (r.student_answers && Array.isArray(r.student_answers)) {
+                r.student_answers.forEach(ans => {
+                    peerAnswers.push({
+                        student_name: studentName,
+                        question_id: ans.question_id,
+                        answer: ans.answer
+                    });
+                });
+            }
+        });
+
+        res.status(200).json({ status: "success", data: peerAnswers });
+    } catch (error) {
+        console.error("Peer Help Error:", error.message);
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
 // Jangan lupa update module.exports di paling bawah:
 module.exports = {
     saveParsedQuestions,
@@ -851,5 +923,6 @@ module.exports = {
     checkSatpamStatus,
     transferRewardCoin,
     getSystemStatus,
-    updateSystemStatus 
+    updateSystemStatus,
+    getPeerHelp
 };
