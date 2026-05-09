@@ -46,6 +46,41 @@ const getExamDetails = async (req, res) => {
     }
 };
 
+// [BARU] 3.5 Ambil Detail Ujian KHUSUS MURID (Tanpa Kunci Jawaban & Cek Deadline)
+const getPlayExamDetails = async (req, res) => {
+    try {
+        const examId = req.params.id;
+        const examDetail = await examModel.getExamDetail(examId);
+
+        // 1. Cek apakah ujian aktif
+        if (!examDetail.is_active) {
+            return res.status(403).json({ status: "error", message: "Ujian ini belum diterbitkan atau sudah ditutup oleh Ustadz." });
+        }
+
+        // 2. Cek Deadline jika ini ujian Daring (PR)
+        if (examDetail.is_daring && examDetail.deadline_at) {
+            const now = new Date();
+            const deadline = new Date(examDetail.deadline_at);
+            if (now > deadline) {
+                return res.status(403).json({ status: "error", message: "Waktu ujian Daring/PR ini sudah habis!" });
+            }
+        }
+
+        // 3. SEMBUNYIKAN KUNCI JAWABAN (Keamanan Anti-Inspect Element)
+        const sanitizedQuestions = examDetail.questions.map(q => {
+            const { correct_answer, ...safeQuestion } = q; // Pisahkan correct_answer agar tidak ikut terkirim
+            return safeQuestion;
+        });
+
+        examDetail.questions = sanitizedQuestions;
+
+        res.status(200).json({ status: "success", data: examDetail });
+    } catch (error) {
+        console.error("Get Play Exam Error:", error);
+        res.status(500).json({ status: "error", message: error.message || "Gagal memuat ujian." });
+    }
+};
+
 // 4. Simpan Soal dari Exam Builder & Terbitkan (Publish)
 const saveAndPublishExam = async (req, res) => {
     try {
@@ -83,14 +118,15 @@ const removeExam = async (req, res) => {
     }
 };
 
-// 6. Menerima Hasil Ujian dari Siswa (Beserta Foto Bukti)
+// 6. Menerima Hasil Ujian dari Siswa & Koreksi Otomatis
 const submitExamResult = async (req, res) => {
     try {
         const examId = req.params.id;
-        const { student_id, subject, score, capture_base64 } = req.body;
+        // [FIX] Kita ganti 'score' jadi 'student_answers'
+        const { student_id, subject, student_answers, capture_base64 } = req.body;
 
-        if (!student_id || score === undefined) {
-            return res.status(400).json({ status: "error", message: "Data tidak lengkap." });
+        if (!student_id || !student_answers || !Array.isArray(student_answers)) {
+            return res.status(400).json({ status: "error", message: "Data jawaban tidak lengkap." });
         }
 
         let capture_url = null;
@@ -113,6 +149,28 @@ const submitExamResult = async (req, res) => {
             } catch (err) { console.error("Gagal memproses foto kamera:", err); }
         }
 
+        // ===============================================================
+        // [BARU] SISTEM KOREKSI OTOMATIS DI BACKEND
+        // ===============================================================
+        const { data: dbQuestions, error: qErr } = await supabase
+            .from('exam_questions')
+            .select('id, correct_answer')
+            .eq('exam_id', examId);
+            
+        if (qErr) throw qErr;
+
+        let correctCount = 0;
+        student_answers.forEach(studentAns => {
+            const match = dbQuestions.find(q => q.id === studentAns.question_id);
+            if (match && match.correct_answer && String(match.correct_answer).toUpperCase() === String(studentAns.answer).toUpperCase()) {
+                correctCount++;
+            }
+        });
+
+        const totalSoal = dbQuestions.length || 1; // Cegah bagi 0
+        const calculatedScore = Math.round((correctCount / totalSoal) * 100);
+        // ===============================================================
+
         // Cek apakah siswa sudah pernah mengerjakan ujian ini
         const { data: existing } = await supabase
             .from('exam_results')
@@ -123,11 +181,23 @@ const submitExamResult = async (req, res) => {
 
         if (existing) {
             await supabase.from('exam_results')
-                .update({ score: score, capture_url: capture_url || existing.capture_url, created_at: new Date().toISOString() })
+                .update({ 
+                    score: calculatedScore, 
+                    student_answers: student_answers, // Simpan histori jawaban anak
+                    capture_url: capture_url || existing.capture_url, 
+                    created_at: new Date().toISOString() 
+                })
                 .eq('id', existing.id);
         } else {
             await supabase.from('exam_results')
-                .insert([{ student_id, exam_id: examId, subject, score, capture_url }]);
+                .insert([{ 
+                    student_id, 
+                    exam_id: examId, 
+                    subject, 
+                    score: calculatedScore, 
+                    student_answers: student_answers, // Simpan histori jawaban anak
+                    capture_url 
+                }]);
         }
 
         // [FITUR BARU] CEK EASTER EGG (APAKAH SEMUA UJIAN AKTIF SUDAH SELESAI?)
@@ -141,16 +211,14 @@ const submitExamResult = async (req, res) => {
             .select('exam_id')
             .eq('student_id', student_id);
 
-        // Hitung berapa ujian unik yang udah diselesaikan murid ini
         const uniqueStudentExams = new Set(studentResults.map(r => r.exam_id)).size;
-        
-        // True jika murid sudah menyelesaikan ujian sebanyak/lebih dari total ujian aktif
         const isAllCompleted = uniqueStudentExams >= totalActiveExams;
 
         res.status(200).json({ 
             status: "success", 
             message: "Nilai dan foto ujian berhasil disimpan.",
-            is_all_completed: isAllCompleted // <--- Kirim sinyal rahasia ini ke Frontend!
+            score: calculatedScore, // Kirim balik nilainya ke Frontend buat dimunculin
+            is_all_completed: isAllCompleted 
         });
     } catch (error) {
         res.status(500).json({ status: "error", message: error.message });
@@ -187,6 +255,30 @@ const getExamResultsByExam = async (req, res) => {
     }
 };
 
+// =========================================================
+// RUTE PUBLIK (LOBBY & LOGIN DARING)
+// =========================================================
+const getPublicExamLobby = async (req, res) => {
+    try {
+        const examId = req.params.id;
+        // Sementara kembalikan pesan sukses agar server tidak crash
+        // Nanti logikanya bisa diisi untuk ambil detail ujian tanpa token
+        res.status(200).json({ status: "success", message: "Lobby publik berhasil diakses." });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+const studentExamLogin = async (req, res) => {
+    try {
+        // Sementara kembalikan pesan sukses agar server tidak crash
+        // Nanti logikanya bisa diisi untuk validasi murid dan cetak token JWT
+        res.status(200).json({ status: "success", message: "Login murid berhasil." });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
 module.exports = {
     createNewExam,
     getExams,
@@ -195,5 +287,8 @@ module.exports = {
     removeExam,
     submitExamResult,
     getStudentExamResults,
-    getExamResultsByExam
+    getExamResultsByExam,
+    getPlayExamDetails,
+    getPublicExamLobby, 
+    studentExamLogin    
 };
