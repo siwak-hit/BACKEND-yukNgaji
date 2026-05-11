@@ -956,6 +956,48 @@ const checkAndResetBully = async (req, res) => {
         res.status(500).json({ status: "error", message: e.message });
     }
 };
+
+const uploadQuestionImage = async (req, res) => {
+    try {
+        // Cek apakah ada file yang dikirim
+        if (!req.file) {
+            return res.status(400).json({ status: "error", message: "Tidak ada file gambar yang dikirim." });
+        }
+
+        const file = req.file;
+        
+        // Bikin nama file unik biar gak bentrok kalau ada guru yang upload nama filenya sama
+        const fileExtension = file.originalname.split('.').pop();
+        const fileName = `soal_${Date.now()}_${Math.round(Math.random() * 1000)}.${fileExtension}`;
+
+        // 1. Upload file fisik ke bucket 'question_images'
+        const { data, error } = await supabase.storage
+            .from('question_images') 
+            .upload(fileName, file.buffer, {
+                contentType: file.mimetype,
+                upsert: false // Jangan timpa file yang ada
+            });
+
+        if (error) throw error;
+
+        // 2. Dapatkan URL Publiknya
+        const { data: publicUrlData } = supabase.storage
+            .from('question_images')
+            .getPublicUrl(fileName);
+
+        // 3. Kembalikan URL publik ke Frontend
+        res.status(200).json({ 
+            status: "success", 
+            message: "Gambar berhasil diupload",
+            data: { url: publicUrlData.publicUrl } 
+        });
+
+    } catch (error) {
+        console.error("Upload Error:", error);
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
 // Jangan lupa update module.exports di paling bawah:
 module.exports = {
     saveParsedQuestions,
@@ -982,5 +1024,6 @@ module.exports = {
     getSystemStatus,
     updateSystemStatus,
     getPeerHelp,
-    checkAndResetBully
+    checkAndResetBully,
+    uploadQuestionImage
 };

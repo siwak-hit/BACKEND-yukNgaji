@@ -5,6 +5,7 @@ const upload = multer({ dest: 'uploads/' });
 const onboardingController = require('../controller/onboardingController');
 const { verifyToken, generatePRLink } = require('../middleware/authMiddleware');
 
+
 // =========================================================================
 // [FIX] PUBLIC ENDPOINT (Taruh di atas verifyToken biar gak kena 401)
 // =========================================================================
@@ -47,5 +48,6 @@ router.post('/system/status', onboardingController.updateSystemStatus);
 router.get('/peer-help', onboardingController.getPeerHelp);
 
 router.get('/check-bully-status', onboardingController.checkAndResetBully);
+router.post('/upload-image', upload.single('file'), onboardingController.uploadQuestionImage);
 
 module.exports = router;
