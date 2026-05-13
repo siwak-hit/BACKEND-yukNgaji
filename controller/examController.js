@@ -68,7 +68,17 @@ const getPlayExamDetails = async (req, res) => {
 
         // 3. SEMBUNYIKAN KUNCI JAWABAN (Keamanan Anti-Inspect Element)
         const sanitizedQuestions = examDetail.questions.map(q => {
-            const { correct_answer, ...safeQuestion } = q; // Pisahkan correct_answer agar tidak ikut terkirim
+            const { correct_answer, ...safeQuestion } = q;
+            
+            // [UPDATE] Berikan petunjuk ke frontend berapa kotak input yang harus dirender untuk tipe isian
+            if (q.question_type === 'fill_in_blanks') {
+                try {
+                    const parsedAns = JSON.parse(correct_answer);
+                    safeQuestion.blank_count = Array.isArray(parsedAns) ? parsedAns.length : 1;
+                } catch(e) {
+                    safeQuestion.blank_count = 1;
+                }
+            }
             return safeQuestion;
         });
 
@@ -154,7 +164,8 @@ const submitExamResult = async (req, res) => {
         // ===============================================================
         const { data: dbQuestions, error: qErr } = await supabase
             .from('exam_questions')
-            .select('id, correct_answer')
+            // [UPDATE] Wajib panggil question_type
+            .select('id, question_type, correct_answer')
             .eq('exam_id', examId);
             
         if (qErr) throw qErr;
@@ -162,8 +173,19 @@ const submitExamResult = async (req, res) => {
         let correctCount = 0;
         student_answers.forEach(studentAns => {
             const match = dbQuestions.find(q => q.id === studentAns.question_id);
-            if (match && match.correct_answer && String(match.correct_answer).toUpperCase() === String(studentAns.answer).toUpperCase()) {
-                correctCount++;
+            if (match) {
+                // CEK TIPE SOAL (Asumsi kamu sudah tambah kolom question_type)
+                if (Array.isArray(studentAns.answer)) {
+                    const correctArr = JSON.parse(match.correct_answer);
+                    const isAllMatch = studentAns.answer.every((val, idx) => 
+                        String(val).trim().toLowerCase() === String(correctArr[idx]).trim().toLowerCase()
+                    );
+                    if (isAllMatch) correctCount++;
+                } else {
+                    if (String(match.correct_answer).toUpperCase() === String(studentAns.answer).toUpperCase()) {
+                        correctCount++;
+                    }
+                }
             }
         });
 
@@ -279,6 +301,59 @@ const studentExamLogin = async (req, res) => {
     }
 };
 
+const buyExamTime = async (req, res) => {
+    try {
+        const { student_id, cost, minutes } = req.body;
+
+        if (!student_id || !cost || !minutes) {
+            return res.status(400).json({ status: "error", message: "Data pembelian tidak lengkap." });
+        }
+
+        // 1. Cek saldo poin siswa 
+        const { data: student, error: fetchErr } = await supabase
+            .from('students')
+            .select('name, poin')
+            .eq('id', student_id)
+            .single();
+
+        if (fetchErr || !student) return res.status(404).json({ status: "error", message: "Siswa tidak ditemukan." });
+
+        // 2. Validasi saldo 
+        if (Number(student.poin) < cost) {
+            return res.status(400).json({ status: "error", message: "Poin tidak mencukupi untuk membeli waktu." });
+        }
+
+        // 3. Potong poin di database 
+        const newPoin = Number(student.poin) - cost;
+        const { error: updateErr } = await supabase
+            .from('students')
+            .update({ poin: newPoin })
+            .eq('id', student_id);
+
+        if (updateErr) throw updateErr;
+
+        // 4. Catat ke Gamification Logs agar riwayatnya jelas 
+        await supabase.from('gamification_logs').insert([{
+            actor_id: student_id,
+            action_type: 'buy_time',
+            point_change: -cost,
+            attacker_name: student.name,
+            metadata: { mins_added: minutes, context: 'exam_session' },
+            is_read: true
+        }]);
+
+        res.status(200).json({ 
+            status: "success", 
+            message: `Berhasil menambah ${minutes} menit.`,
+            data: { new_poin: newPoin } 
+        });
+
+    } catch (error) {
+        console.error("Error Buy Time:", error);
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
 module.exports = {
     createNewExam,
     getExams,
@@ -290,5 +365,6 @@ module.exports = {
     getExamResultsByExam,
     getPlayExamDetails,
     getPublicExamLobby, 
-    studentExamLogin    
+    studentExamLogin,
+    buyExamTime    
 };

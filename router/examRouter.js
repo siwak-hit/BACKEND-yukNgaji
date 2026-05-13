@@ -20,6 +20,7 @@ router.post('/', examController.createNewExam);
 router.get('/', examController.getExams);
 router.get('/play/:id', examController.getPlayExamDetails);
 router.get('/student/:studentId/results', examController.getStudentExamResults);
+router.post('/buy-time', examController.buyExamTime);
 
 router.get('/:id', examController.getExamDetails);
 router.put('/:id', examController.saveAndPublishExam);

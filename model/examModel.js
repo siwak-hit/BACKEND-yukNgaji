@@ -22,7 +22,6 @@ const getExamsByTeacher = async (username) => {
 const getExamDetail = async (examId) => {
     const { data: exam, error: examErr } = await supabase
         .from('exams')
-        // [FIX] Tambahkan is_daring & deadline_at
         .select('id, title, subject, duration_minutes, is_active, is_daring, deadline_at') 
         .eq('id', examId)
         .single();
@@ -30,7 +29,8 @@ const getExamDetail = async (examId) => {
 
     const { data: questions, error: qErr } = await supabase
         .from('exam_questions')
-        .select('id, question, options, correct_answer, hint, image_url') 
+        // [UPDATE] Tambahkan question_type ke dalam select
+        .select('id, question_type, question, options, correct_answer, hint, image_url') 
         .eq('exam_id', examId)
         .order('created_at', { ascending: true });
     if (qErr) throw qErr;
@@ -47,12 +47,14 @@ const updateExam = async (examId, updateData) => {
 const saveExamQuestions = async (examId, questionsArray) => {
     await supabase.from('exam_questions').delete().eq('exam_id', examId);
     if (questionsArray && questionsArray.length > 0) {
-        // [PERBAIKAN] Hapus difficulty_level dari proses insert
         const formattedQuestions = questionsArray.map(q => ({
             exam_id: examId, 
+            // [UPDATE] Masukkan question_type
+            question_type: q.question_type || 'multiple_choice',
             question: q.question, 
-            options: q.options, 
-            correct_answer: q.correct_answer,
+            options: q.options || {}, 
+            // [UPDATE] Jika jawaban berupa Array (isian berurut), ubah jadi JSON String
+            correct_answer: Array.isArray(q.correct_answer) ? JSON.stringify(q.correct_answer) : q.correct_answer,
             hint: q.hint || null, 
             image_url: q.image_url || null
         }));
