@@ -16,6 +16,7 @@ const adminRouter = require('./router/adminRouter');
 const examRouter = require('./router/examRouter');
 const shopRouter = require('./router/shopRouter');
 const notificationRouter = require('./router/notificationRouter');
+const oralExamRouter = require('./router/oralExamRouter');
 
 // 1. Konfigurasi CORS (Sangat penting agar Frontend di Vercel bisa akses)
 app.use(cors({
@@ -33,9 +34,9 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // 2. Route Default (Cek Status Server di Vercel)
 app.get('/', (req, res) => {
-    res.status(200).json({ 
-        status: 'success', 
-        message: '🚀 yukNgaji API is perfectly running on Vercel!' 
+    res.status(200).json({
+        status: 'success',
+        message: '🚀 yukNgaji API is perfectly running on Vercel!'
     });
 });
 
@@ -53,6 +54,7 @@ app.use('/api/admin', adminRouter);
 app.use('/api/exams', examRouter);
 app.use('/api/shop', shopRouter);
 app.use('/api/notifications', notificationRouter);
+app.use('/api/oral-exams', oralExamRouter);
 
 // 4. Export untuk dibaca oleh platform Serverless Vercel
 module.exports = app;
