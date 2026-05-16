@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const upload = multer({ dest: 'uploads/' }); 
+const upload = multer({ dest: 'uploads/' });
 const onboardingController = require('../controller/onboardingController');
 const { verifyToken, generatePRLink } = require('../middleware/authMiddleware');
 
@@ -16,12 +16,14 @@ router.get('/system/status', onboardingController.getSystemStatus);
 // =========================================================================
 router.use(verifyToken);
 
+router.post('/feedback', onboardingController.submitAppFeedback);
+
 router.post('/', onboardingController.submitOnboarding);
 router.post('/upload-template', onboardingController.saveParsedQuestions);
 router.post('/submit-grade', onboardingController.submitAndGradeAnswers);
 
-router.get('/questions/summary',        onboardingController.getQuestionsSummary); 
-router.get('/questions/summary-all',    onboardingController.getQuestionsSummaryAll); 
+router.get('/questions/summary',        onboardingController.getQuestionsSummary);
+router.get('/questions/summary-all',    onboardingController.getQuestionsSummaryAll);
 router.put('/questions/:id',            onboardingController.updateQuestion);
 router.delete('/questions/:id',         onboardingController.deleteQuestion);
 

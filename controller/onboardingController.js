@@ -19,7 +19,7 @@ const saveParsedQuestions = async (req, res) => {
             return {
                 subject,
                 week: parseInt(week),
-                type: q.type || 'pilgan', 
+                type: q.type || 'pilgan',
                 question: q.question,
                 options: q.options,
                 correct_answer: finalCorrectAnswer, // Simpan text/string
@@ -52,11 +52,11 @@ const updateQuestion = async (req, res) => {
 
         const { data, error } = await supabase
             .from('questions')
-            .update({ 
-                type: type || 'pilgan', 
-                question, 
-                options, 
-                correct_answer: finalCorrectAnswer, 
+            .update({
+                type: type || 'pilgan',
+                question,
+                options,
+                correct_answer: finalCorrectAnswer,
                 difficulty_level,
                 image_url: image_url ? image_url.trim() : null
             })
@@ -87,7 +87,7 @@ const deleteQuestion = async (req, res) => {
 const getQuestions = async (req, res) => {
     try {
         const { subject } = req.params;
-        const { week } = req.query; 
+        const { week } = req.query;
 
         // [PERBAIKAN KUNCI]: Tambahkan image_url di dalam select!
         let query = supabase.from('questions')
@@ -123,7 +123,7 @@ const getQuestionsSummary = async (req, res) => {
         if (error) throw error;
 
         const summary = { tajwid: { maxWeek: 0, gaps: [], allWeeks: [] }, fiqih: { maxWeek: 0, gaps: [], allWeeks: [] }, tauhid: { maxWeek: 0, gaps: [], allWeeks: [] } };
-        
+
         if (data) {
             ['tajwid', 'fiqih', 'tauhid'].forEach(subj => {
                 const subjData = data.filter(q => q.subject === subj);
@@ -219,7 +219,7 @@ const submitAndGradeAnswers = async (req, res) => {
 
         const totalSoal = student_answers.length;
         const rawScore = totalSoal > 0 ? Math.round((correctCount / totalSoal) * 100) : 0;
-        
+
         // 2. Ambil data dompet & inventory siswa dari DB
         const { data: studentInfo } = await supabase
             .from('students')
@@ -238,7 +238,7 @@ const submitAndGradeAnswers = async (req, res) => {
             else if (finalScore < 50) finalScore += 15;
             else if (finalScore < 70) finalScore += 10;
             else if (finalScore < 100) finalScore += 5;
-            
+
             if (finalScore > 100) finalScore = 100; // Cap maksimal
         }
 
@@ -253,17 +253,17 @@ const submitAndGradeAnswers = async (req, res) => {
             let newPoin = studentInfo.poin + poinRewardDikalikan;
             let newDoubleCount = studentInfo.item_double_score;
             let newExtraLifeCount = studentInfo.item_extra_life;
-            
+
             if (isItemUsed) newDoubleCount -= 1; // Kurangi Double Score
-            
+
             // [PERBAIKAN]: Kurangi Extra Life di DB jika dipakai
             if (is_extra_life_used && newExtraLifeCount > 0) {
                 newExtraLifeCount -= 1;
             }
 
             await supabase.from('students')
-                .update({ 
-                    poin: newPoin, 
+                .update({
+                    poin: newPoin,
                     item_double_score: newDoubleCount,
                     item_extra_life: newExtraLifeCount
                 })
@@ -277,9 +277,9 @@ const submitAndGradeAnswers = async (req, res) => {
                 student_id,
                 subject,
                 week: parseInt(week),
-                score: finalScore, 
+                score: finalScore,
                 category,
-                student_answers, 
+                student_answers,
                 notes: isItemUsed ? "Koreksi Sihir ✨ (Double Poin Aktif)" : "Koreksi otomatis oleh sistem",
                 is_pr: is_pr || false,
                 time_taken: time_taken || 0
@@ -293,7 +293,7 @@ const submitAndGradeAnswers = async (req, res) => {
             if (prLock && prLock.deadline_at) {
                 const now = new Date();
                 const originalDeadline = new Date(prLock.deadline_at);
-                
+
                 // Cari data dispensasi anak ini
                 let extRecord = null;
                 if (prLock.extended_students && Array.isArray(prLock.extended_students)) {
@@ -322,8 +322,8 @@ const submitAndGradeAnswers = async (req, res) => {
         if (is_pr) {
             // Ambil nama anak dari info DB (karena dari body cuma student_id)
             // Note: studentInfo sudah di-query di langkah sebelumnya, kita manfaatkan saja.
-            let studentNameStr = "Anak"; 
-            
+            let studentNameStr = "Anak";
+
             // Query nama kalau studentInfo cuma ambil poin & item
             const { data: stdNameData } = await supabase
                 .from('students').select('name').eq('id', student_id).single();
@@ -339,7 +339,7 @@ const submitAndGradeAnswers = async (req, res) => {
         // =========================================================
         // --- LOGIKA PEMUSNAHAN PERISAI MASSAL (LANGKAH 5) ---
         // =========================================================
-        // 1. Ambil nama ustadz (created_by) dari siswa yang sedang submit 
+        // 1. Ambil nama ustadz (created_by) dari siswa yang sedang submit
         const { data: currentStudentData } = await supabase
             .from('students')
             .select('created_by')
@@ -391,60 +391,151 @@ const submitAndGradeAnswers = async (req, res) => {
 
 const getPRLeaderboard = async (req, res) => {
     try {
-        const { subject, week } = req.query;
+        // Ambil semua parameter yang dibutuhkan dari query
+        const { subject, week, mode, exam_id } = req.query;
 
-        // 1. Ambil SEMUA hasil di mapel & minggu ini (Hapus filter .eq('is_pr', true))
-        // [UPDATE] Tambahkan 'is_pr' ke dalam list .select()
-        const { data: results, error } = await supabase
-            .from('onboarding_results')
-            .select('student_id, score, created_at, time_taken, is_pr') 
-            .eq('subject', subject)
-            .eq('week', week);
+        // ===============================================================
+        // MODE 1: EXAM (Dari Patch Baru)
+        // ===============================================================
+        if (mode === 'exam') {
+            if (!exam_id) {
+                return res.status(400).json({
+                    status: 'error',
+                    message: 'exam_id wajib dikirim untuk leaderboard mode exam.'
+                });
+            }
 
-        if (error) throw error;
-        if (!results || results.length === 0) return res.status(200).json({ status: 'success', data: [] });
+            const { data: examData, error: examErr } = await supabase
+                .from('exams')
+                .select('id, title, subject, duration_minutes')
+                .eq('id', exam_id)
+                .single();
 
-        const { data: students } = await supabase.from('students').select('id, name');
+            if (examErr) throw examErr;
 
-        // 2. Sortir waktu submit untuk fitur "Early Bird" (Siapa Cepat)
-        const sortedBySubmit = [...results].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+            const { data: results, error: resultErr } = await supabase
+                .from('exam_results')
+                .select('student_id, score, created_at')
+                .eq('exam_id', exam_id);
 
-        // 3. Kalkulasi Poin Komposit
-        const leaderboard = results.map(r => {
-            const student = students.find(s => s.id === r.student_id);
-            const rawScore = r.score || 0;
-            const timeTaken = r.time_taken || 180; // Default 3 menit
+            if (resultErr) throw resultErr;
 
-            // A. Bobot Nilai (80%) -> Max 80 Poin
-            const scorePoin = (rawScore / 100) * 80;
+            if (!results || results.length === 0) {
+                return res.status(200).json({
+                    status: 'success',
+                    mode: 'exam',
+                    meta: examData,
+                    data: []
+                });
+            }
 
-            // B. Bobot Waktu (10%) -> Max 10 Poin (Makin cepet makin gede)
-            const maxTime = subject === 'tajwid' ? 105 : 180; 
-            let timePoin = ((maxTime - timeTaken) / maxTime) * 10;
-            if (timePoin < 0) timePoin = 0;
+            const studentIds = results.map(r => r.student_id);
 
-            // C. Bobot Early Bird (10%) -> Anak pertama yg ngumpulin dpt 10, kedua 9, dst.
-            const submitRank = sortedBySubmit.findIndex(x => x.student_id === r.student_id);
-            const earlyPoin = Math.max(0, 10 - submitRank);
+            const { data: students, error: studentsErr } = await supabase
+                .from('students')
+                .select('id, name')
+                .in('id', studentIds);
 
-            const compositeScore = (scorePoin + timePoin + earlyPoin).toFixed(1);
+            if (studentsErr) throw studentsErr;
 
-            return {
-                student_id: r.student_id,
-                name: student ? student.name.split(' ')[0] : 'Unknown', // Ambil nama panggilan
-                raw_score: rawScore,
-                time_taken: timeTaken,
-                composite_score: parseFloat(compositeScore),
-                is_pr: r.is_pr || false // <--- [BARU] Lempar status PR ke Frontend
-            };
-        });
+            const sortedBySubmit = [...results].sort(
+                (a, b) => new Date(a.created_at) - new Date(b.created_at)
+            );
 
-        // Urutkan dari poin tertinggi ke terendah
-        leaderboard.sort((a, b) => b.composite_score - a.composite_score);
+            const leaderboard = results.map(r => {
+                const student = students.find(s => String(s.id) === String(r.student_id));
+                const rawScore = Number(r.score || 0);
 
-        res.status(200).json({ status: 'success', data: leaderboard });
+                // Karena exam_results belum punya time_taken,
+                // composite sementara = nilai 90% + urutan submit 10%.
+                const scorePoin = (rawScore / 100) * 90;
+
+                const submitRank = sortedBySubmit.findIndex(
+                    x => String(x.student_id) === String(r.student_id)
+                );
+
+                const earlyPoin = Math.max(0, 10 - submitRank);
+                const compositeScore = Number((scorePoin + earlyPoin).toFixed(1));
+
+                return {
+                    student_id: r.student_id,
+                    name: student ? student.name.split(' ')[0] : 'Unknown',
+                    raw_score: rawScore,
+                    time_taken: '-',
+                    composite_score: compositeScore,
+                    is_pr: false
+                };
+            });
+
+            leaderboard.sort((a, b) => b.composite_score - a.composite_score);
+
+            return res.status(200).json({
+                status: 'success',
+                mode: 'exam',
+                meta: examData,
+                data: leaderboard
+            });
+        }
+
+        // ===============================================================
+        // MODE 2: DEFAULT / PR (Kode Lama)
+        // ===============================================================
+        else {
+            // 1. Ambil SEMUA hasil di mapel & minggu ini (Hapus filter .eq('is_pr', true))
+            // [UPDATE] Tambahkan 'is_pr' ke dalam list .select()
+            const { data: results, error } = await supabase
+                .from('onboarding_results')
+                .select('student_id, score, created_at, time_taken, is_pr')
+                .eq('subject', subject)
+                .eq('week', week);
+
+            if (error) throw error;
+            if (!results || results.length === 0) return res.status(200).json({ status: 'success', data: [] });
+
+            const { data: students } = await supabase.from('students').select('id, name');
+
+            // 2. Sortir waktu submit untuk fitur "Early Bird" (Siapa Cepat)
+            const sortedBySubmit = [...results].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+            // 3. Kalkulasi Poin Komposit
+            const leaderboard = results.map(r => {
+                const student = students.find(s => s.id === r.student_id);
+                const rawScore = r.score || 0;
+                const timeTaken = r.time_taken || 180; // Default 3 menit
+
+                // A. Bobot Nilai (80%) -> Max 80 Poin
+                const scorePoin = (rawScore / 100) * 80;
+
+                // B. Bobot Waktu (10%) -> Max 10 Poin (Makin cepet makin gede)
+                const maxTime = subject === 'tajwid' ? 105 : 180;
+                let timePoin = ((maxTime - timeTaken) / maxTime) * 10;
+                if (timePoin < 0) timePoin = 0;
+
+                // C. Bobot Early Bird (10%) -> Anak pertama yg ngumpulin dpt 10, kedua 9, dst.
+                const submitRank = sortedBySubmit.findIndex(x => x.student_id === r.student_id);
+                const earlyPoin = Math.max(0, 10 - submitRank);
+
+                const compositeScore = (scorePoin + timePoin + earlyPoin).toFixed(1);
+
+                return {
+                    student_id: r.student_id,
+                    name: student ? student.name.split(' ')[0] : 'Unknown', // Ambil nama panggilan
+                    raw_score: rawScore,
+                    time_taken: timeTaken,
+                    composite_score: parseFloat(compositeScore),
+                    is_pr: r.is_pr || false // <--- [BARU] Lempar status PR ke Frontend
+                };
+            });
+
+            // Urutkan dari poin tertinggi ke terendah
+            leaderboard.sort((a, b) => b.composite_score - a.composite_score);
+
+            return res.status(200).json({ status: 'success', data: leaderboard });
+        }
+
     } catch (err) {
-        res.status(500).json({ status: 'error', message: err.message });
+        console.error("Error pada getPRLeaderboard:", err);
+        return res.status(500).json({ status: 'error', message: err.message });
     }
 };
 
@@ -454,7 +545,7 @@ const submitOnboarding = async (req, res) => res.status(200).json({ status: "suc
 const getStudentProgress = async (req, res) => {
     try {
         const studentId = req.params.id;
-        
+
         // Ambil riwayat nilai siswa
         const { data: progressData, error } = await supabase
             .from('onboarding_results')
@@ -481,13 +572,13 @@ const getStudentProgress = async (req, res) => {
 const getReviewData = async (req, res) => {
     try {
         const { id, subject, week } = req.params;
-        
+
         if (!id || !subject || !week) {
             return res.status(400).json({ status: "error", message: "Parameter tidak lengkap." });
         }
 
         const data = await onboardingModel.getStudentReview(id, subject, parseInt(week));
-        
+
         res.status(200).json({ status: "success", data });
     } catch (error) {
         console.error("Get Review Error:", error.message);
@@ -503,7 +594,7 @@ const retryWrongAnswers = async (req, res) => {
         // 1. Cek kepemilikan item Extra Life
         const { data: student, error: studentErr } = await supabase
             .from('students').select('item_extra_life').eq('id', student_id).single();
-        
+
         if (studentErr || student.item_extra_life <= 0) {
             return res.status(400).json({ status: "error", message: "Kamu tidak memiliki item Extra Life!" });
         }
@@ -511,7 +602,7 @@ const retryWrongAnswers = async (req, res) => {
         // 2. Ambil hasil ujian sebelumnya
         const { data: pastResult, error: resultErr } = await supabase
             .from('onboarding_results').select('*').eq('id', result_id).single();
-            
+
         if (resultErr) throw resultErr;
 
         let updatedAnswers = pastResult.student_answers;
@@ -525,7 +616,7 @@ const retryWrongAnswers = async (req, res) => {
         // 4. Lakukan penilaian ulang (mirip dengan logika grading biasa)
         const questionIds = updatedAnswers.map(ans => ans.question_id);
         const { data: dbQuestions } = await supabase.from('questions').select('id, correct_answer, type').in('id', questionIds);
-        
+
         let correctCount = 0;
         updatedAnswers.forEach(ans => {
             const match = dbQuestions.find(q => q.id === ans.question_id);
@@ -561,17 +652,17 @@ const getQuestionsSummaryAll = async (req, res) => {
 
         // Ekspektasi Format: { "1": { "tajwid": 9, "fiqih": 5, "tauhid": 4 }, "2": { ... } }
         const summary = {};
-        
+
         if (data) {
             data.forEach(q => {
                 const w = q.week;
                 const s = q.subject;
-                
+
                 // Jika minggu ini belum ada di object summary, inisialisasi
                 if (!summary[w]) {
                     summary[w] = { tajwid: 0, fiqih: 0, tauhid: 0 };
                 }
-                
+
                 // Tambahkan hitungan soal untuk mapel tersebut
                 if (summary[w][s] !== undefined) {
                     summary[w][s]++;
@@ -580,7 +671,7 @@ const getQuestionsSummaryAll = async (req, res) => {
                 }
             });
         }
-        
+
         res.status(200).json({ status: "success", data: summary });
     } catch (error) {
         console.error("Get Summary All Error:", error.message);
@@ -595,13 +686,13 @@ const togglePRLock = async (req, res) => {
     try {
         const { subject, week, is_locked, deadline_at } = req.body;
         // Upsert data
-        const { error } = await supabase.from('pr_locks').upsert({ 
-            subject, 
-            week, 
+        const { error } = await supabase.from('pr_locks').upsert({
+            subject,
+            week,
             is_locked,
-            deadline_at: deadline_at || null 
+            deadline_at: deadline_at || null
         }, { onConflict: 'subject, week' });
-        
+
         if (error) throw error;
         res.status(200).json({ status: 'success' });
     } catch (error) {
@@ -612,16 +703,16 @@ const togglePRLock = async (req, res) => {
 const grantExtension = async (req, res) => {
     try {
         const { subject, week, student_id, extension_until } = req.body;
-        
+
         const { data: pr } = await supabase.from('pr_locks').select('extended_students').eq('subject', subject).eq('week', week).single();
         let extended = pr?.extended_students || [];
-        
+
         // Bersihkan data lama jika anak ini pernah dikasih dispensasi
         extended = extended.filter(ext => typeof ext === 'object' ? ext.student_id !== student_id : ext !== student_id);
-        
+
         // Masukkan objek dispensasi baru (ID + Deadline)
         extended.push({ student_id, until: extension_until });
-        
+
         await supabase.from('pr_locks').update({ extended_students: extended }).eq('subject', subject).eq('week', week);
         res.status(200).json({ status: 'success', message: 'Dispensasi diberikan!' });
     } catch (error) {
@@ -638,9 +729,9 @@ const getPRLocks = async (req, res) => {
             .select('week')
             .eq('subject', subject)
             .eq('is_locked', true);
-            
+
         if (error) throw error;
-        
+
         // Return array [1, 3] (misal minggu 1 dan 3 digembok)
         res.status(200).json({ status: 'success', data: data.map(d => d.week) });
     } catch (err) {
@@ -659,7 +750,7 @@ const uploadSatpamPhoto = async (req, res) => {
 
         const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
         const buffer = Buffer.from(base64Data, 'base64');
-        
+
         // [UPDATE] Format penamaan file sesuai request
         // Hapus spasi dan karakter aneh dari nama biar URL-nya nggak rusak
         const safeName = student_name ? student_name.replace(/[^a-zA-Z0-9]/g, '_') : 'Siswa';
@@ -695,7 +786,7 @@ const uploadSatpamPhoto = async (req, res) => {
 const getPRLockDetail = async (req, res) => {
     try {
         const { subject, week } = req.query;
-        
+
         if (!subject || !week) {
             return res.status(400).json({ status: "error", message: "Subject dan week wajib diisi" });
         }
@@ -722,7 +813,7 @@ const getPRLockDetail = async (req, res) => {
 const transferRewardCoin = async (req, res) => {
     try {
         const { student_id, amount } = req.body;
-        
+
         if (!student_id || !amount || amount <= 0) {
             return res.status(400).json({ status: "error", message: "Data tidak valid" });
         }
@@ -770,7 +861,7 @@ const transferRewardCoin = async (req, res) => {
 const checkSatpamStatus = async (req, res) => {
     try {
         const { student_id, subject, week } = req.query;
-        
+
         if (!student_id || !subject || !week) {
             return res.status(400).json({ status: "error", message: "Parameter tidak lengkap" });
         }
@@ -810,9 +901,9 @@ const getSystemStatus = async (req, res) => {
 
         if (error) throw error;
 
-        res.status(200).json({ 
-            status: 'success', 
-            data: { is_maintenance: data.is_maintenance } 
+        res.status(200).json({
+            status: 'success',
+            data: { is_maintenance: data.is_maintenance }
         });
     } catch (error) {
         res.status(500).json({ status: 'error', message: error.message });
@@ -872,7 +963,7 @@ const getPeerHelp = async (req, res) => {
             .from('students')
             .select('id, name')
             .in('id', peerIds);
-        
+
         if (stdErr) throw stdErr;
 
         // 3. Format data menjadi array flat biar frontend gampang nyocokkinnya
@@ -880,7 +971,7 @@ const getPeerHelp = async (req, res) => {
         results.forEach(r => {
             const student = students.find(s => s.id === r.student_id);
             const studentName = student ? student.name.split(' ')[0] : 'Teman'; // Ambil nama panggilan aja
-            
+
             if (r.student_answers && Array.isArray(r.student_answers)) {
                 r.student_answers.forEach(ans => {
                     peerAnswers.push({
@@ -915,13 +1006,13 @@ const checkAndResetBully = async (req, res) => {
 
         // 2. Jika sedang dibully, jalankan pelacakan!
         if (student.is_bullied === true) {
-            
+
             // Segera reset status di DB biar animasinya gak jalan berkali-kali
             await supabase
                 .from('students')
                 .update({ is_bullied: false })
                 .eq('id', student_id);
-            
+
             // [FIX PALING JITU] Cari tau ID pelaku dari log serangan terbaru
             const { data: log } = await supabase
                 .from('gamification_logs')
@@ -946,7 +1037,7 @@ const checkAndResetBully = async (req, res) => {
                     attackerName = actor.name.split(' ')[0]; // Ambil nama panggilannya aja
                 }
             }
-            
+
             // Beritahu frontend untuk jalanin aksi dan kirim nama asli pelakunya
             return res.status(200).json({ status: "success", trigger_bully: true, attacker_name: attackerName });
         }
@@ -965,14 +1056,14 @@ const uploadQuestionImage = async (req, res) => {
         }
 
         const file = req.file;
-        
+
         // Bikin nama file unik biar gak bentrok kalau ada guru yang upload nama filenya sama
         const fileExtension = file.originalname.split('.').pop();
         const fileName = `soal_${Date.now()}_${Math.round(Math.random() * 1000)}.${fileExtension}`;
 
         // 1. Upload file fisik ke bucket 'question_images'
         const { data, error } = await supabase.storage
-            .from('question_images') 
+            .from('question_images')
             .upload(fileName, file.buffer, {
                 contentType: file.mimetype,
                 upsert: false // Jangan timpa file yang ada
@@ -986,15 +1077,72 @@ const uploadQuestionImage = async (req, res) => {
             .getPublicUrl(fileName);
 
         // 3. Kembalikan URL publik ke Frontend
-        res.status(200).json({ 
-            status: "success", 
+        res.status(200).json({
+            status: "success",
             message: "Gambar berhasil diupload",
-            data: { url: publicUrlData.publicUrl } 
+            data: { url: publicUrlData.publicUrl }
         });
 
     } catch (error) {
         console.error("Upload Error:", error);
         res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+const submitAppFeedback = async (req, res) => {
+    try {
+        const {
+            student_id,
+            exam_id,
+            comfort_rating,
+            difficulty_rating,
+            favorite_part,
+            hardest_part,
+            suggestion,
+            message,
+            source
+        } = req.body;
+
+        if (!student_id) {
+            return res.status(400).json({
+                status: "error",
+                message: "student_id wajib dikirim."
+            });
+        }
+
+        const payload = {
+            student_id,
+            exam_id: exam_id || null,
+            comfort_rating: comfort_rating ? parseInt(comfort_rating) : null,
+            difficulty_rating: difficulty_rating ? parseInt(difficulty_rating) : null,
+            favorite_part: favorite_part || null,
+            hardest_part: hardest_part || null,
+            suggestion: suggestion || null,
+            message: message || null,
+            source: source || 'exam_final'
+        };
+
+        const { data, error } = await supabase
+            .from('app_feedbacks')
+            .upsert([payload], {
+                onConflict: 'student_id,exam_id'
+            })
+            .select('id')
+            .single();
+
+        if (error) throw error;
+
+        return res.status(201).json({
+            status: "success",
+            message: "Feedback berhasil disimpan.",
+            data
+        });
+    } catch (error) {
+        console.error("Submit App Feedback Error:", error);
+        return res.status(500).json({
+            status: "error",
+            message: error.message || "Gagal menyimpan feedback."
+        });
     }
 };
 
@@ -1025,5 +1173,6 @@ module.exports = {
     updateSystemStatus,
     getPeerHelp,
     checkAndResetBully,
-    uploadQuestionImage
+    uploadQuestionImage,
+    submitAppFeedback
 };

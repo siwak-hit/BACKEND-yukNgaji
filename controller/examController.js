@@ -69,7 +69,7 @@ const getPlayExamDetails = async (req, res) => {
         // 3. SEMBUNYIKAN KUNCI JAWABAN (Keamanan Anti-Inspect Element)
         const sanitizedQuestions = examDetail.questions.map(q => {
             const { correct_answer, ...safeQuestion } = q;
-            
+
             // [UPDATE] Berikan petunjuk ke frontend berapa kotak input yang harus dirender untuk tipe isian
             if (q.question_type === 'fill_in_blanks') {
                 try {
@@ -132,16 +132,38 @@ const removeExam = async (req, res) => {
 const submitExamResult = async (req, res) => {
     try {
         const examId = req.params.id;
-        // [FIX] Kita ganti 'score' jadi 'student_answers'
         const { student_id, subject, student_answers, capture_base64 } = req.body;
 
+        // ===============================================================
+        // 1. VALIDASI INPUT DASAR
+        // ===============================================================
         if (!student_id || !student_answers || !Array.isArray(student_answers)) {
             return res.status(400).json({ status: "error", message: "Data jawaban tidak lengkap." });
         }
 
-        let capture_url = null;
+        // ===============================================================
+        // 2. CEK APAKAH SUDAH PERNAH MENGUMPULKAN SEBELUMNYA
+        // ===============================================================
+        const { data: existingExamResult, error: existingExamResultErr } = await supabase
+            .from('exam_results')
+            .select('id, score')
+            .eq('student_id', student_id)
+            .eq('exam_id', examId)
+            .maybeSingle();
 
-        // PROSES UPLOAD FOTO KAMERA (Jika Ada)
+        if (existingExamResultErr) throw existingExamResultErr;
+
+        if (existingExamResult) {
+            return res.status(400).json({
+                status: "error",
+                message: "Ujian ini sudah pernah kamu kumpulkan sebelumnya."
+            });
+        }
+
+        // ===============================================================
+        // 3. PROSES UPLOAD FOTO KAMERA (Jika Ada)
+        // ===============================================================
+        let capture_url = null;
         if (capture_base64) {
             try {
                 const base64Data = capture_base64.replace(/^data:image\/\w+;base64,/, "");
@@ -156,28 +178,28 @@ const submitExamResult = async (req, res) => {
                     const { data: publicUrlData } = supabase.storage.from('exam_captures').getPublicUrl(fileName);
                     if (publicUrlData) capture_url = publicUrlData.publicUrl;
                 }
-            } catch (err) { console.error("Gagal memproses foto kamera:", err); }
+            } catch (err) {
+                console.error("Gagal memproses foto kamera:", err);
+            }
         }
 
         // ===============================================================
-        // [BARU] SISTEM KOREKSI OTOMATIS DI BACKEND
+        // 4. SISTEM KOREKSI OTOMATIS DI BACKEND
         // ===============================================================
         const { data: dbQuestions, error: qErr } = await supabase
             .from('exam_questions')
-            // [UPDATE] Wajib panggil question_type
             .select('id, question_type, correct_answer')
             .eq('exam_id', examId);
-            
+
         if (qErr) throw qErr;
 
         let correctCount = 0;
         student_answers.forEach(studentAns => {
             const match = dbQuestions.find(q => q.id === studentAns.question_id);
             if (match) {
-                // CEK TIPE SOAL (Asumsi kamu sudah tambah kolom question_type)
                 if (Array.isArray(studentAns.answer)) {
                     const correctArr = JSON.parse(match.correct_answer);
-                    const isAllMatch = studentAns.answer.every((val, idx) => 
+                    const isAllMatch = studentAns.answer.every((val, idx) =>
                         String(val).trim().toLowerCase() === String(correctArr[idx]).trim().toLowerCase()
                     );
                     if (isAllMatch) correctCount++;
@@ -191,59 +213,110 @@ const submitExamResult = async (req, res) => {
 
         const totalSoal = dbQuestions.length || 1; // Cegah bagi 0
         const calculatedScore = Math.round((correctCount / totalSoal) * 100);
+
+        // ===============================================================
+        // 5. SIMPAN HASIL KE DATABASE (Insert Baru)
+        // ===============================================================
+        const { error: insertError } = await supabase.from('exam_results')
+            .insert([{
+                student_id,
+                exam_id: examId,
+                subject,
+                score: calculatedScore,
+                student_answers: student_answers,
+                capture_url
+            }]);
+
+        if (insertError) throw insertError;
+
+        // ===============================================================
+        // 6. FINAL FLOW: CEK APAKAH SISWA SUDAH MENYELESAIKAN SEMUA UJIAN
         // ===============================================================
 
-        // Cek apakah siswa sudah pernah mengerjakan ujian ini
-        const { data: existing } = await supabase
-            .from('exam_results')
-            .select('id, capture_url')
-            .eq('exam_id', examId)
-            .eq('student_id', student_id)
+        // 6.1 Ambil info ujian saat ini
+        const { data: currentExam, error: currentExamErr } = await supabase
+            .from('exams')
+            .select('id, title, subject, created_by, is_active')
+            .eq('id', examId)
             .single();
 
-        if (existing) {
-            await supabase.from('exam_results')
-                .update({ 
-                    score: calculatedScore, 
-                    student_answers: student_answers, // Simpan histori jawaban anak
-                    capture_url: capture_url || existing.capture_url, 
-                    created_at: new Date().toISOString() 
-                })
-                .eq('id', existing.id);
-        } else {
-            await supabase.from('exam_results')
-                .insert([{ 
-                    student_id, 
-                    exam_id: examId, 
-                    subject, 
-                    score: calculatedScore, 
-                    student_answers: student_answers, // Simpan histori jawaban anak
-                    capture_url 
-                }]);
-        }
+        if (currentExamErr) throw currentExamErr;
 
-        // [FITUR BARU] CEK EASTER EGG (APAKAH SEMUA UJIAN AKTIF SUDAH SELESAI?)
-        const { count: totalActiveExams } = await supabase
+        // 6.2 Ambil semua ujian aktif milik guru yang sama
+        let requiredExamQuery = supabase
             .from('exams')
-            .select('*', { count: 'exact', head: true })
+            .select('id, title, subject')
             .eq('is_active', true);
 
-        const { data: studentResults } = await supabase
+        if (currentExam?.created_by) {
+            requiredExamQuery = requiredExamQuery.eq('created_by', currentExam.created_by);
+        }
+
+        const { data: requiredExams, error: requiredErr } = await requiredExamQuery;
+
+        if (requiredErr) throw requiredErr;
+
+        const requiredExamIds = new Set(
+            (requiredExams || []).map(exam => String(exam.id))
+        );
+
+        // 6.3 Ambil semua hasil ujian siswa ini
+        const { data: studentResults, error: studentResultsErr } = await supabase
             .from('exam_results')
             .select('exam_id')
             .eq('student_id', student_id);
 
-        const uniqueStudentExams = new Set(studentResults.map(r => r.exam_id)).size;
-        const isAllCompleted = uniqueStudentExams >= totalActiveExams;
+        if (studentResultsErr) throw studentResultsErr;
 
-        res.status(200).json({ 
-            status: "success", 
+        // 6.4 Hitung progress siswa berdasarkan exam aktif guru yang sama
+        const completedRequiredExamIds = new Set(
+            (studentResults || [])
+                .map(result => String(result.exam_id))
+                .filter(examResultId => requiredExamIds.has(examResultId))
+        );
+
+        const totalRequiredExams = requiredExamIds.size;
+        const totalCompletedExams = completedRequiredExamIds.size;
+
+        const isAllCompleted =
+            totalRequiredExams > 0 &&
+            totalCompletedExams >= totalRequiredExams;
+
+        // 6.5 Siapkan redirect
+        const leaderboardRedirect =
+            `/selesai?mode=exam` +
+            `&exam_id=${encodeURIComponent(examId)}` +
+            `&subject=${encodeURIComponent(currentExam?.subject || subject || 'Ujian')}` +
+            `&student_id=${encodeURIComponent(student_id)}`;
+
+        const finalLeaderboardRedirect =
+            `${leaderboardRedirect}&final=true&feedback_required=true`;
+
+        // ===============================================================
+        // 7. KIRIM RESPONSE KE FRONTEND
+        // ===============================================================
+        return res.status(200).json({
+            status: "success",
             message: "Nilai dan foto ujian berhasil disimpan.",
-            score: calculatedScore, // Kirim balik nilainya ke Frontend buat dimunculin
-            is_all_completed: isAllCompleted 
+
+            // kompatibel dengan frontend lama
+            score: calculatedScore,
+            is_all_completed: isAllCompleted,
+
+            // format baru
+            data: {
+                score: calculatedScore,
+                is_all_completed: isAllCompleted,
+                total_required_exams: totalRequiredExams,
+                total_completed_exams: totalCompletedExams,
+                next_redirect: leaderboardRedirect,
+                after_wrapped_redirect: finalLeaderboardRedirect
+            }
         });
+
     } catch (error) {
-        res.status(500).json({ status: "error", message: error.message });
+        console.error("Error pada submitExamResult:", error);
+        return res.status(500).json({ status: "error", message: error.message });
     }
 };
 
@@ -254,7 +327,7 @@ const getStudentExamResults = async (req, res) => {
             .from('exam_results')
             .select('*')
             .eq('student_id', req.params.studentId);
-            
+
         if (error) throw error;
         res.status(200).json({ status: "success", data: data || [] });
     } catch (error) {
@@ -269,7 +342,7 @@ const getExamResultsByExam = async (req, res) => {
             .from('exam_results')
             .select('student_id, score')
             .eq('exam_id', req.params.id);
-            
+
         if (error) throw error;
         res.status(200).json({ status: "success", data: data || [] });
     } catch (error) {
@@ -309,7 +382,7 @@ const buyExamTime = async (req, res) => {
             return res.status(400).json({ status: "error", message: "Data pembelian tidak lengkap." });
         }
 
-        // 1. Cek saldo poin siswa 
+        // 1. Cek saldo poin siswa
         const { data: student, error: fetchErr } = await supabase
             .from('students')
             .select('name, poin')
@@ -318,12 +391,12 @@ const buyExamTime = async (req, res) => {
 
         if (fetchErr || !student) return res.status(404).json({ status: "error", message: "Siswa tidak ditemukan." });
 
-        // 2. Validasi saldo 
+        // 2. Validasi saldo
         if (Number(student.poin) < cost) {
             return res.status(400).json({ status: "error", message: "Poin tidak mencukupi untuk membeli waktu." });
         }
 
-        // 3. Potong poin di database 
+        // 3. Potong poin di database
         const newPoin = Number(student.poin) - cost;
         const { error: updateErr } = await supabase
             .from('students')
@@ -332,7 +405,7 @@ const buyExamTime = async (req, res) => {
 
         if (updateErr) throw updateErr;
 
-        // 4. Catat ke Gamification Logs agar riwayatnya jelas 
+        // 4. Catat ke Gamification Logs agar riwayatnya jelas
         await supabase.from('gamification_logs').insert([{
             actor_id: student_id,
             action_type: 'buy_time',
@@ -342,14 +415,35 @@ const buyExamTime = async (req, res) => {
             is_read: true
         }]);
 
-        res.status(200).json({ 
-            status: "success", 
+        res.status(200).json({
+            status: "success",
             message: `Berhasil menambah ${minutes} menit.`,
-            data: { new_poin: newPoin } 
+            data: { new_poin: newPoin }
         });
 
     } catch (error) {
         console.error("Error Buy Time:", error);
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+const completeExamTutorial = async (req, res) => {
+    try {
+        const { student_id } = req.body;
+
+        if (!student_id) {
+            return res.status(400).json({ status: "error", message: "ID Siswa diperlukan." });
+        }
+
+        const { error } = await supabase
+            .from('students')
+            .update({ has_completed_exam_tutorial: true })
+            .eq('id', student_id);
+
+        if (error) throw error;
+
+        res.status(200).json({ status: "success", message: "Tutorial berhasil diselesaikan." });
+    } catch (error) {
         res.status(500).json({ status: "error", message: error.message });
     }
 };
@@ -364,7 +458,8 @@ module.exports = {
     getStudentExamResults,
     getExamResultsByExam,
     getPlayExamDetails,
-    getPublicExamLobby, 
+    getPublicExamLobby,
     studentExamLogin,
-    buyExamTime    
+    buyExamTime,
+    completeExamTutorial
 };

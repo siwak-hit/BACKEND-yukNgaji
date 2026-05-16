@@ -27,5 +27,6 @@ router.put('/:id', examController.saveAndPublishExam);
 router.delete('/:id', examController.removeExam);
 router.post('/:id/submit', examController.submitExamResult);
 router.get('/:id/results', examController.getExamResultsByExam);
+router.post('/tutorial/complete', examController.completeExamTutorial);
 
 module.exports = router;
