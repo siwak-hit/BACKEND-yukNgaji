@@ -21,6 +21,7 @@ router.get('/', examController.getExams);
 router.get('/play/:id', examController.getPlayExamDetails);
 router.get('/student/:studentId/results', examController.getStudentExamResults);
 router.post('/buy-time', examController.buyExamTime);
+router.post('/buy-hint', examController.buyExamHint);
 router.post('/tutorial/complete', examController.completeExamTutorial);
 
 // Retake permissions

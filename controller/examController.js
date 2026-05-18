@@ -643,6 +643,75 @@ const markRetakePermissionUsed = async (req, res) => {
     }
 };
 
+const buyExamHint = async (req, res) => {
+    try {
+        const { student_id, cost = 50, exam_id, question_id } = req.body;
+
+        if (!student_id || !cost || !exam_id || !question_id) {
+            return res.status(400).json({
+                status: "error",
+                message: "Data pembelian clue tidak lengkap."
+            });
+        }
+
+        const { data: student, error: fetchErr } = await supabase
+            .from('students')
+            .select('name, poin')
+            .eq('id', student_id)
+            .single();
+
+        if (fetchErr || !student) {
+            return res.status(404).json({
+                status: "error",
+                message: "Siswa tidak ditemukan."
+            });
+        }
+
+        if (Number(student.poin) < Number(cost)) {
+            return res.status(400).json({
+                status: "error",
+                message: "Poin tidak mencukupi untuk membuka clue."
+            });
+        }
+
+        const newPoin = Number(student.poin) - Number(cost);
+
+        const { error: updateErr } = await supabase
+            .from('students')
+            .update({ poin: newPoin })
+            .eq('id', student_id);
+
+        if (updateErr) throw updateErr;
+
+        await supabase.from('gamification_logs').insert([{
+            actor_id: student_id,
+            action_type: 'buy_hint',
+            point_change: -Number(cost),
+            metadata: {
+                exam_id,
+                question_id,
+                context: 'exam_hint'
+            },
+            is_read: true
+        }]);
+
+        return res.status(200).json({
+            status: "success",
+            message: "Clue berhasil dibuka.",
+            data: {
+                new_poin: newPoin
+            }
+        });
+
+    } catch (error) {
+        console.error("Error Buy Hint:", error);
+        return res.status(500).json({
+            status: "error",
+            message: error.message || "Gagal membeli clue."
+        });
+    }
+};
+
 module.exports = {
     createNewExam,
     getExams,
@@ -660,5 +729,6 @@ module.exports = {
 
     createRetakePermission,
     checkRetakePermission,
+    buyExamHint,
     markRetakePermissionUsed
 };
