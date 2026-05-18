@@ -7,10 +7,8 @@ router.use(verifyToken);
 
 // Endpoint Global Dashboard
 router.get('/dashboard', insightController.getGlobalDashboard);
-
-// Endpoint Insights Kelas
 router.get('/class', insightController.getClassInsights);
-
-router.get('/filters', verifyToken, insightController.getFilters);
+router.get('/filters', insightController.getFilters);
+router.get('/exam-missing', insightController.getExamMissingStatus);
 
 module.exports = router;
