@@ -1,5 +1,11 @@
 const examModel = require('../model/examModel');
-const supabase = require('../config/supabaseClient'); // <-- KITA PANGGIL SUPABASE LANGSUNG DI SINI
+const supabase = require('../config/supabaseClient');
+
+const REQUIRED_FINAL_SUBJECTS = ['tajwid', 'fiqih', 'tauhid'];
+
+const normalizeSubject = (subject = '') => {
+    return String(subject).trim().toLowerCase();
+};
 
 // 1. Buat Wrapper Ujian Baru (Draft Awal)
 const createNewExam = async (req, res) => {
@@ -242,11 +248,12 @@ const submitExamResult = async (req, res) => {
 
         if (currentExamErr) throw currentExamErr;
 
-        // 6.2 Ambil semua ujian aktif milik guru yang sama
+        // 6.2 Ambil ujian aktif untuk mapel wajib final
         let requiredExamQuery = supabase
             .from('exams')
             .select('id, title, subject')
-            .eq('is_active', true);
+            .eq('is_active', true)
+            .in('subject', REQUIRED_FINAL_SUBJECTS);
 
         if (currentExam?.created_by) {
             requiredExamQuery = requiredExamQuery.eq('created_by', currentExam.created_by);
@@ -256,31 +263,61 @@ const submitExamResult = async (req, res) => {
 
         if (requiredErr) throw requiredErr;
 
-        const requiredExamIds = new Set(
-            (requiredExams || []).map(exam => String(exam.id))
+        // Map subject -> exam_id yang wajib
+        const requiredSubjectMap = new Map();
+
+        (requiredExams || []).forEach(exam => {
+            const subjectKey = normalizeSubject(exam.subject);
+
+            if (REQUIRED_FINAL_SUBJECTS.includes(subjectKey)) {
+                requiredSubjectMap.set(subjectKey, String(exam.id));
+            }
+        });
+
+        // Kalau ujian wajib belum lengkap dibuat/published, final tidak boleh muncul
+        const hasAllRequiredExamsPublished = REQUIRED_FINAL_SUBJECTS.every(subject =>
+            requiredSubjectMap.has(subject)
         );
 
-        // 6.3 Ambil semua hasil ujian siswa ini
+        // 6.3 Ambil semua hasil ujian siswa ini + subject ujian
         const { data: studentResults, error: studentResultsErr } = await supabase
             .from('exam_results')
-            .select('exam_id')
+            .select(`
+                exam_id,
+                exams (
+                    id,
+                    subject,
+                    created_by,
+                    is_active
+                )
+            `)
             .eq('student_id', student_id);
 
         if (studentResultsErr) throw studentResultsErr;
 
-        // 6.4 Hitung progress siswa berdasarkan exam aktif guru yang sama
-        const completedRequiredExamIds = new Set(
-            (studentResults || [])
-                .map(result => String(result.exam_id))
-                .filter(examResultId => requiredExamIds.has(examResultId))
-        );
+        // 6.4 Hitung subject wajib yang sudah selesai
+        const completedRequiredSubjects = new Set();
 
-        const totalRequiredExams = requiredExamIds.size;
-        const totalCompletedExams = completedRequiredExamIds.size;
+        (studentResults || []).forEach(result => {
+            const exam = result.exams;
+            if (!exam) return;
+
+            if (currentExam?.created_by && exam.created_by !== currentExam.created_by) return;
+            if (exam.is_active !== true) return;
+
+            const subjectKey = normalizeSubject(exam.subject);
+
+            if (REQUIRED_FINAL_SUBJECTS.includes(subjectKey)) {
+                completedRequiredSubjects.add(subjectKey);
+            }
+        });
+
+        const totalRequiredExams = REQUIRED_FINAL_SUBJECTS.length;
+        const totalCompletedExams = completedRequiredSubjects.size;
 
         const isAllCompleted =
-            totalRequiredExams > 0 &&
-            totalCompletedExams >= totalRequiredExams;
+            hasAllRequiredExamsPublished &&
+            REQUIRED_FINAL_SUBJECTS.every(subject => completedRequiredSubjects.has(subject));
 
         // 6.5 Siapkan redirect
         const leaderboardRedirect =
