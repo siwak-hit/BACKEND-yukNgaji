@@ -29,4 +29,8 @@ router.post('/:id/submit', examController.submitExamResult);
 router.get('/:id/results', examController.getExamResultsByExam);
 router.post('/tutorial/complete', examController.completeExamTutorial);
 
+router.post('/:id/retake-permissions', authMiddleware, examController.createRetakePermission);
+router.get('/:id/retake-permissions/check', authMiddleware, examController.checkRetakePermission);
+router.post('/:id/retake-permissions/use', authMiddleware, examController.markRetakePermissionUsed);
+
 module.exports = router;

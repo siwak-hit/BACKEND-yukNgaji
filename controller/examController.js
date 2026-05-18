@@ -448,6 +448,201 @@ const completeExamTutorial = async (req, res) => {
     }
 };
 
+const createRetakePermission = async (req, res) => {
+    try {
+        const examId = req.params.id;
+        const username = req.user.username;
+
+        const {
+            student_id,
+            mode = 'extra_time',
+            extra_minutes = 10,
+            reason = ''
+        } = req.body;
+
+        if (!student_id) {
+            return res.status(400).json({
+                status: "error",
+                message: "Siswa wajib dipilih."
+            });
+        }
+
+        if (!['reset', 'continue', 'extra_time'].includes(mode)) {
+            return res.status(400).json({
+                status: "error",
+                message: "Mode izin tidak valid."
+            });
+        }
+
+        if (mode === 'extra_time' && (!extra_minutes || Number(extra_minutes) <= 0)) {
+            return res.status(400).json({
+                status: "error",
+                message: "Tambahan menit wajib lebih dari 0."
+            });
+        }
+
+        // Pastikan ujian milik guru yang login
+        const { data: exam, error: examErr } = await supabase
+            .from('exams')
+            .select('id, title, created_by')
+            .eq('id', examId)
+            .single();
+
+        if (examErr || !exam) {
+            return res.status(404).json({
+                status: "error",
+                message: "Ujian tidak ditemukan."
+            });
+        }
+
+        if (exam.created_by !== username) {
+            return res.status(403).json({
+                status: "error",
+                message: "Kamu tidak punya akses ke ujian ini."
+            });
+        }
+
+        // Pastikan siswa ada
+        const { data: student, error: studentErr } = await supabase
+            .from('students')
+            .select('id, name')
+            .eq('id', student_id)
+            .single();
+
+        if (studentErr || !student) {
+            return res.status(404).json({
+                status: "error",
+                message: "Siswa tidak ditemukan."
+            });
+        }
+
+        // Nonaktifkan izin lama yang belum dipakai untuk exam + siswa yang sama
+        await supabase
+            .from('exam_retake_permissions')
+            .update({
+                is_used: true,
+                used_at: new Date().toISOString(),
+                reason: 'Digantikan oleh izin baru'
+            })
+            .eq('exam_id', examId)
+            .eq('student_id', student_id)
+            .eq('is_used', false);
+
+        const { data, error } = await supabase
+            .from('exam_retake_permissions')
+            .insert([{
+                exam_id: examId,
+                student_id,
+                mode,
+                extra_minutes: mode === 'extra_time' ? Number(extra_minutes) : 0,
+                reason,
+                granted_by: username
+            }])
+            .select(`
+                *,
+                students (
+                    id,
+                    name
+                )
+            `)
+            .single();
+
+        if (error) throw error;
+
+        return res.status(201).json({
+            status: "success",
+            message: "Izin ujian berhasil dibuat.",
+            data
+        });
+
+    } catch (error) {
+        console.error("Create Retake Permission Error:", error);
+        return res.status(500).json({
+            status: "error",
+            message: error.message || "Gagal membuat izin ujian."
+        });
+    }
+};
+
+const checkRetakePermission = async (req, res) => {
+    try {
+        const examId = req.params.id;
+        const { student_id } = req.query;
+
+        if (!student_id) {
+            return res.status(400).json({
+                status: "error",
+                message: "student_id wajib dikirim."
+            });
+        }
+
+        const { data, error } = await supabase
+            .from('exam_retake_permissions')
+            .select('*')
+            .eq('exam_id', examId)
+            .eq('student_id', student_id)
+            .eq('is_used', false)
+            .order('granted_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        if (error) throw error;
+
+        return res.status(200).json({
+            status: "success",
+            data: data || null
+        });
+
+    } catch (error) {
+        console.error("Check Retake Permission Error:", error);
+        return res.status(500).json({
+            status: "error",
+            message: error.message || "Gagal mengecek izin ujian."
+        });
+    }
+};
+
+const markRetakePermissionUsed = async (req, res) => {
+    try {
+        const examId = req.params.id;
+        const { permission_id, student_id } = req.body;
+
+        if (!permission_id || !student_id) {
+            return res.status(400).json({
+                status: "error",
+                message: "permission_id dan student_id wajib dikirim."
+            });
+        }
+
+        const { data, error } = await supabase
+            .from('exam_retake_permissions')
+            .update({
+                is_used: true,
+                used_at: new Date().toISOString()
+            })
+            .eq('id', permission_id)
+            .eq('exam_id', examId)
+            .eq('student_id', student_id)
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        return res.status(200).json({
+            status: "success",
+            message: "Izin ujian sudah dipakai.",
+            data
+        });
+
+    } catch (error) {
+        console.error("Mark Retake Permission Used Error:", error);
+        return res.status(500).json({
+            status: "error",
+            message: error.message || "Gagal memakai izin ujian."
+        });
+    }
+};
+
 module.exports = {
     createNewExam,
     getExams,
@@ -461,5 +656,9 @@ module.exports = {
     getPublicExamLobby,
     studentExamLogin,
     buyExamTime,
-    completeExamTutorial
+    completeExamTutorial,
+
+    createRetakePermission,
+    checkRetakePermission,
+    markRetakePermissionUsed
 };
