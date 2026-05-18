@@ -21,16 +21,18 @@ router.get('/', examController.getExams);
 router.get('/play/:id', examController.getPlayExamDetails);
 router.get('/student/:studentId/results', examController.getStudentExamResults);
 router.post('/buy-time', examController.buyExamTime);
+router.post('/tutorial/complete', examController.completeExamTutorial);
 
+// Retake permissions
+router.post('/:id/retake-permissions', examController.createRetakePermission);
+router.get('/:id/retake-permissions/check', examController.checkRetakePermission);
+router.post('/:id/retake-permissions/use', examController.markRetakePermissionUsed);
+
+// Generic exam routes taruh setelah route spesifik
 router.get('/:id', examController.getExamDetails);
 router.put('/:id', examController.saveAndPublishExam);
 router.delete('/:id', examController.removeExam);
 router.post('/:id/submit', examController.submitExamResult);
 router.get('/:id/results', examController.getExamResultsByExam);
-router.post('/tutorial/complete', examController.completeExamTutorial);
-
-router.post('/:id/retake-permissions', authMiddleware, examController.createRetakePermission);
-router.get('/:id/retake-permissions/check', authMiddleware, examController.checkRetakePermission);
-router.post('/:id/retake-permissions/use', authMiddleware, examController.markRetakePermissionUsed);
 
 module.exports = router;
