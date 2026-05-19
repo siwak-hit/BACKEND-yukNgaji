@@ -232,6 +232,14 @@ const getOralExamSessionDetail = async (req, res) => {
 
         if (participantErr) throw participantErr;
 
+        const { data: prompts, error: promptErr } = await supabase
+            .from('oral_understanding_prompts')
+            .select('id, prompt, expected_keywords')
+            .eq('template_id', id)
+            .order('sort_order', { ascending: true });
+
+        if (promptErr) throw promptErr;
+
         const students = (participants || []).map(p => ({
             session_student_id: p.id,
             order_index: p.order_index,
@@ -283,7 +291,8 @@ const getOralExamSessionDetail = async (req, res) => {
                 session,
                 sections: safeSections,
                 students,
-                available_students: availableStudents // <-- Penambahan di sini
+                available_students: availableStudents,
+                understanding_prompts: prompts // <-- Penambahan di sini
             }
         });
     } catch (error) {
