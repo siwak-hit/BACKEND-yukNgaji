@@ -330,10 +330,32 @@ const submitAndGradeAnswers = async (req, res) => {
             if(stdNameData) studentNameStr = stdNameData.name;
 
             // Insert Notif
-            await supabase.from('pr_notifications').insert([{
-                student_name: studentNameStr,
-                subject: subject
-            }]);
+            if (is_pr) {
+                let studentNameStr = "Anak";
+                let teacherUsername = null;
+
+                const { data: stdNameData } = await supabase
+                    .from('students')
+                    .select('name, created_by')
+                    .eq('id', student_id)
+                    .single();
+
+                if (stdNameData) {
+                    studentNameStr = stdNameData.name;
+                    teacherUsername = stdNameData.created_by;
+                }
+
+                await supabase.from('pr_notifications').insert([{
+                    notif_type: 'pr',
+                    student_id,
+                    student_name: studentNameStr,
+                    subject,
+                    week: parseInt(week),
+                    score: finalScore,
+                    title: `PR ${subject} Pertemuan ${week}`,
+                    created_by: teacherUsername
+                }]);
+            }
         }
 
         // =========================================================
@@ -434,15 +456,21 @@ const getPRLeaderboard = async (req, res) => {
             const { data: students, error: studentsErr } = await supabase
                 .from('students')
                 .select('id, name')
-                .in('id', studentIds);
+                .in('id', studentIds)
+                .not('name', 'ilike', '%john doe%')
+                .not('name', 'ilike', '%xaviera%')
+                .not('name', 'ilike', '%xaveria%');
+
+            const allowedStudentIds = new Set((students || []).map(s => String(s.id)));
+            const filteredResults = (results || []).filter(r => allowedStudentIds.has(String(r.student_id)));
 
             if (studentsErr) throw studentsErr;
 
-            const sortedBySubmit = [...results].sort(
+            const sortedBySubmit = [...filteredResults].sort(
                 (a, b) => new Date(a.created_at) - new Date(b.created_at)
             );
 
-            const leaderboard = results.map(r => {
+            const leaderboard = filteredResults.map(r => {
                 const student = students.find(s => String(s.id) === String(r.student_id));
                 const rawScore = Number(r.score || 0);
 
@@ -492,13 +520,21 @@ const getPRLeaderboard = async (req, res) => {
             if (error) throw error;
             if (!results || results.length === 0) return res.status(200).json({ status: 'success', data: [] });
 
-            const { data: students } = await supabase.from('students').select('id, name');
+            const { data: students } = await supabase
+                .from('students')
+                .select('id, name')
+                .not('name', 'ilike', '%john doe%')
+                .not('name', 'ilike', '%xaviera%')
+                .not('name', 'ilike', '%xaveria%');
+
+            const allowedStudentIds = new Set((students || []).map(s => String(s.id)));
+            const filteredResults = (results || []).filter(r => allowedStudentIds.has(String(r.student_id)));
 
             // 2. Sortir waktu submit untuk fitur "Early Bird" (Siapa Cepat)
-            const sortedBySubmit = [...results].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+            const sortedBySubmit = [...filteredResults].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
             // 3. Kalkulasi Poin Komposit
-            const leaderboard = results.map(r => {
+            const leaderboard = filteredResults.map(r => {
                 const student = students.find(s => s.id === r.student_id);
                 const rawScore = r.score || 0;
                 const timeTaken = r.time_taken || 180; // Default 3 menit

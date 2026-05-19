@@ -223,17 +223,44 @@ const submitExamResult = async (req, res) => {
         // ===============================================================
         // 5. SIMPAN HASIL KE DATABASE (Insert Baru)
         // ===============================================================
-        const { error: insertError } = await supabase.from('exam_results')
-            .insert([{
-                student_id,
-                exam_id: examId,
-                subject,
-                score: calculatedScore,
-                student_answers: student_answers,
-                capture_url
-            }]);
+        const { data: insertedExamResult, error: insertError } = await supabase.from('exam_results')
+        .insert([{
+            student_id,
+            exam_id: examId,
+            subject,
+            score: calculatedScore,
+            student_answers: student_answers,
+            capture_url
+        }])
+        .select('id, student_id, exam_id, subject, score, capture_url, created_at')
+        .single();
 
         if (insertError) throw insertError;
+
+        const { data: notifStudent } = await supabase
+            .from('students')
+            .select('name, created_by')
+            .eq('id', student_id)
+            .single();
+
+        const { data: notifExam } = await supabase
+            .from('exams')
+            .select('title, subject, created_by')
+            .eq('id', examId)
+            .single();
+
+        await supabase.from('pr_notifications').insert([{
+            notif_type: 'exam',
+            student_id,
+            student_name: notifStudent?.name || 'Anak',
+            exam_id: examId,
+            result_id: insertedExamResult.id,
+            subject: notifExam?.subject || subject,
+            score: calculatedScore,
+            title: notifExam?.title || 'Ujian',
+            capture_url,
+            created_by: notifExam?.created_by || notifStudent?.created_by || null
+        }]);
 
         // ===============================================================
         // 6. FINAL FLOW: CEK APAKAH SISWA SUDAH MENYELESAIKAN SEMUA UJIAN
