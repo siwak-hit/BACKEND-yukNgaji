@@ -12,7 +12,7 @@ const normalizeText = (text = '') => {
 };
 
 const getBaseReward = (level) => {
-    return level <= 5 ? 20 : 30;
+    return level <= 5 ? 5 : 10;
 };
 
 const getComboReward = (timeTakenSeconds) => {
@@ -23,17 +23,16 @@ const getComboReward = (timeTakenSeconds) => {
 
 const getDailyChallengeState = async (req, res) => {
     try {
-        const { student_id, preview } = req.query;
+        // Terima client_date dari query
+        const { student_id, preview, client_date } = req.query;
         const isPreview = preview === 'true';
 
         if (!student_id && !isPreview) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'student_id wajib dikirim.'
-            });
+            return res.status(400).json({ status: 'error', message: 'student_id wajib dikirim.' });
         }
 
-        const today = getTodayDate();
+        // Gunakan client_date jika ada, jika tidak fallback ke server date
+        const today = client_date || getTodayDate();
 
         if (isPreview) {
             return res.status(200).json({
@@ -118,22 +117,15 @@ const getDailyChallengeState = async (req, res) => {
 
 const submitDailyChallengeLevel = async (req, res) => {
     try {
+        // Terima client_date dari body
         const {
-            student_id,
-            level,
-            sentence_id,
-            typed_text,
-            time_taken_seconds,
-            preview = false
+            student_id, level, sentence_id, typed_text, time_taken_seconds, preview = false, client_date
         } = req.body;
 
         const isPreview = preview === true;
 
         if (!isPreview && !student_id) {
-            return res.status(400).json({
-                status: 'error',
-                message: 'student_id wajib dikirim.'
-            });
+            return res.status(400).json({ status: 'error', message: 'student_id wajib dikirim.' });
         }
 
         if (!level || level < 1 || level > 10 || !sentence_id || !typed_text) {
@@ -165,8 +157,7 @@ const submitDailyChallengeLevel = async (req, res) => {
                 data: { is_correct: false }
             });
         }
-
-        const today = getTodayDate();
+        const today = client_date || getTodayDate();
         const baseReward = getBaseReward(Number(level));
         const comboMultiplier = getComboMultiplier(Number(time_taken_seconds || 999));
 
