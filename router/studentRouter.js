@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const multer = require('multer'); 
-const upload = multer({ storage: multer.memoryStorage() }); 
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage() });
 const studentController = require('../controller/studentController');
 const onboardingController = require('../controller/onboardingController');
 const todoController = require('../controller/todoController');
@@ -61,6 +61,7 @@ router.get('/:id/latest-photo', verifyToken, studentController.getLatestStudentP
 // Tambahkan baris ini
 router.get('/:id/point-history', verifyToken, studentController.getPointHistory);
 router.get('/:id/satpam-logs', studentController.getSatpamLogs);
+router.get('/:id/exam-captures', verifyToken, studentController.getExamCaptures);
 
 router.post('/:id/murojaah', logMurojaah);
 

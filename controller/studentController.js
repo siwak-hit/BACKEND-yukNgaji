@@ -31,7 +31,7 @@ const getAllStudents = async (req, res) => {
     try {
         const teacherUsername = req.user.username;
         const students = await studentModel.getStudentsByTeacher(teacherUsername);
-        
+
         res.status(200).json({ status: "success", data: students });
     } catch (error) {
         res.status(500).json({ status: "error", message: error.message });
@@ -42,7 +42,7 @@ const getAllStudents = async (req, res) => {
 const getStudent = async (req, res) => {
     try {
         const student = await studentModel.getStudentById(req.params.id, req.user.username);
-        
+
         if (!student) {
             return res.status(404).json({ status: "error", message: "Siswa tidak ditemukan atau Anda tidak memiliki akses" });
         }
@@ -51,15 +51,15 @@ const getStudent = async (req, res) => {
         if (student.is_shield_active && student.shield_activated_at) {
             const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
             const shieldDateStr = new Date(student.shield_activated_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
-            
+
             // Jika tanggal aktifnya bukan hari ini (sudah ganti hari)
             if (todayStr !== shieldDateStr) {
                 student.is_shield_active = false;
                 student.shield_activated_at = null;
                 // Matikan di database
-                await supabase.from('students').update({ 
-                    is_shield_active: false, 
-                    shield_activated_at: null 
+                await supabase.from('students').update({
+                    is_shield_active: false,
+                    shield_activated_at: null
                 }).eq('id', student.id);
             }
         }
@@ -75,7 +75,7 @@ const getStudent = async (req, res) => {
 const updateStudentInfo = async (req, res) => {
     try {
         const { name, grade, age } = req.body;
-        
+
         const existingStudent = await studentModel.getStudentById(req.params.id, req.user.username);
         if (!existingStudent) {
             return res.status(404).json({ status: "error", message: "Siswa tidak ditemukan atau Anda tidak memiliki akses" });
@@ -171,15 +171,15 @@ const getStudentAttendance = async (req, res) => {
         let todayStatus = null;
         const izinDates = [];
         const alpaDates = [];
-        
-        const mandatoryDays = [1, 2, 3, 5]; 
-        
+
+        const mandatoryDays = [1, 2, 3, 5];
+
         const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
 
         attendances.forEach(att => {
             const studentAtt = att.present_students[id];
-            
-            if (!studentAtt) return; 
+
+            if (!studentAtt) return;
 
             const status = studentAtt.status;
             const dow = new Date(att.date).getDay();
@@ -204,7 +204,7 @@ const getStudentAttendance = async (req, res) => {
 
         const totalValidDays = hadir + izin + alpa;
         let performance = "100%";
-        
+
         if (totalValidDays > 0) {
             performance = Math.round((hadir / totalValidDays) * 100) + "%";
         }
@@ -331,7 +331,7 @@ const getStudentGallery = async (req, res) => {
 const uploadGalleryPhoto = async (req, res) => {
     try {
         const { id } = req.params;
-        
+
         // Tangkap file dari multer (req.file)
         if (!req.file) return res.status(400).json({ message: "Foto kosong" });
 
@@ -339,9 +339,9 @@ const uploadGalleryPhoto = async (req, res) => {
         const fileName = `gallery_${id}_${Date.now()}.jpg`;
 
         // Upload ke bucket 'gallery_captures' Supabase
-        const { error: uploadError } = await supabase.storage.from('gallery_captures').upload(fileName, buffer, { 
-            contentType: req.file.mimetype, 
-            upsert: true 
+        const { error: uploadError } = await supabase.storage.from('gallery_captures').upload(fileName, buffer, {
+            contentType: req.file.mimetype,
+            upsert: true
         });
         if (uploadError) throw uploadError;
 
@@ -361,7 +361,7 @@ const uploadGalleryPhoto = async (req, res) => {
 // 3. Hapus Foto Sakti (Storage + DB) dengan Password Admin Dinamis
 const deleteStudentPhoto = async (req, res) => {
     try {
-        const { id, type, url, password } = req.body; 
+        const { id, type, url, password } = req.body;
         const username = req.user.username; // Mengambil username guru yang sedang login dari token
 
         // 1. Ambil data password guru dari tabel 'users'
@@ -396,7 +396,7 @@ const deleteStudentPhoto = async (req, res) => {
                 const pathParts = parts[1].split('/');
                 const bucket = pathParts[0];
                 const filePath = pathParts.slice(1).join('/');
-                await supabase.storage.from(bucket).remove([filePath]); 
+                await supabase.storage.from(bucket).remove([filePath]);
             }
         } catch (e) {
             console.log("Storage delete error (diabaikan):", e.message);
@@ -408,7 +408,7 @@ const deleteStudentPhoto = async (req, res) => {
         } else if (type === 'exam') {
             await supabase.from('exam_results').update({ capture_url: null }).eq('id', id);
         } else if (type === 'gallery') {
-            await supabase.from('student_gallery').delete().eq('id', id); 
+            await supabase.from('student_gallery').delete().eq('id', id);
         }
 
         res.status(200).json({ status: "success", message: "Foto berhasil dimusnahkan" });
@@ -421,7 +421,7 @@ const deleteStudentPhoto = async (req, res) => {
 const getLatestStudentPhoto = async (req, res) => {
     try {
         const studentId = req.params.id;
-        
+
         // Tarik 1 foto terbaru dari masing-masing 3 sumber
         const [galRes, exmRes, cnsRes] = await Promise.all([
             supabase.from('student_gallery').select('image_url, created_at').eq('student_id', studentId).order('created_at', { ascending: false }).limit(1),
@@ -430,7 +430,7 @@ const getLatestStudentPhoto = async (req, res) => {
         ]);
 
         let allPhotos = [];
-        
+
         if (galRes.data && galRes.data.length > 0) allPhotos.push({ url: galRes.data[0].image_url, date: new Date(galRes.data[0].created_at) });
         if (exmRes.data && exmRes.data.length > 0) allPhotos.push({ url: exmRes.data[0].capture_url, date: new Date(exmRes.data[0].created_at) });
         if (cnsRes.data && cnsRes.data.length > 0) allPhotos.push({ url: cnsRes.data[0].image_url, date: new Date(cnsRes.data[0].created_at) });
@@ -463,20 +463,25 @@ const getStudentsWithStats = async (req, res) => {
 
         const studentIds = students.map(s => s.id);
 
-        // 2. Ambil SEMUA nilai sekaligus
+        // 2. Ambil SEMUA nilai TUGAS (onboarding)
         const { data: progress } = await supabase.from('onboarding_results')
-            .select('student_id, subject, score, week') // <--- TAMBAHKAN 'week' DI SINI
+            .select('student_id, subject, score, week')
             .in('student_id', studentIds);
 
-        // 3. Ambil SEMUA absen sekaligus
+        // [BARU] 3. Ambil SEMUA data UJIAN AKHIR
+        const { data: exams } = await supabase.from('exam_results')
+            .select('student_id, subject')
+            .in('student_id', studentIds);
+
+        // 4. Ambil SEMUA absen sekaligus
         const { data: attendances } = await supabase.from('attendances')
             .select('date, present_students').eq('created_by', username);
 
-        // 4. Ambil SEMUA foto konsultasi sekaligus
+        // 5. Ambil SEMUA foto konsultasi
         const { data: photos } = await supabase.from('consultations')
             .select('student_id, image_url').not('image_url', 'is', null).in('student_id', studentIds);
 
-        // 5. Olah & Gabungkan di memory server (Sangat Cepat)
+        // 6. Olah & Gabungkan di memory server
         const enriched = students.map(s => {
             const sProg = (progress || []).filter(p => p.student_id === s.id);
             const tajwid = sProg.filter(p => p.subject === 'tajwid');
@@ -488,26 +493,31 @@ const getStudentsWithStats = async (req, res) => {
             const th_avg = tauhid.length ? Math.round(tauhid.reduce((a,b)=>a+b.score,0)/tauhid.length) : 0;
             const finalScore = Math.round((t_avg + f_avg + th_avg) / 3) || 0;
 
+            // [BARU] Cek apakah murid ini sudah ngerjain ke-3 ujian akhir
+            const sExams = (exams || []).filter(e => e.student_id === s.id);
+            const is_exam_completed =
+                sExams.some(e => e.subject === 'tajwid') &&
+                sExams.some(e => e.subject === 'fiqih') &&
+                sExams.some(e => e.subject === 'tauhid');
+
             let hadir = 0;
             (attendances || []).forEach(att => {
                 if (att.present_students && att.present_students[s.id] && att.present_students[s.id].status === 'hadir') hadir++;
             });
 
             const latestPhoto = (photos || []).find(p => p.student_id === s.id)?.image_url || null;
-            const completed_tasks = sProg.map(p => ({
-                subject: p.subject,
-                week: p.week
-            }));
+            const completed_tasks = sProg.map(p => ({ subject: p.subject, week: p.week }));
 
-            return { 
-                ...s, 
-                t_avg, 
-                f_avg, 
-                th_avg, 
-                finalScore, 
-                hadir, 
+            return {
+                ...s,
+                t_avg,
+                f_avg,
+                th_avg,
+                finalScore,
+                hadir,
                 photo_url: latestPhoto,
-                completed_tasks // <--- WAJIB DITAMBAHKAN
+                completed_tasks,
+                is_exam_completed // <--- Flag ini yang akan dibaca Frontend
             };
         });
 
@@ -542,12 +552,12 @@ const getPointHistory = async (req, res) => {
             logs.forEach(log => {
                 let title = ""; let isPositive = true; let pts = ""; let icon = "💰";
                 const itemDate = new Date(log.created_at);
-                
+
                 // MAPPING DESKRIPSI BERDASARKAN TIPE AKSI
                 // MAPPING DESKRIPSI BERDASARKAN TIPE AKSI
                 if (log.action_type === 'beli_item' || log.action_type.startsWith('beli_item')) {
-                    let itemName = "Item Toko"; 
-                    
+                    let itemName = "Item Toko";
+
                     // [HACK]: Tebak nama item dari jumlah poin yang terpotong (karena harga tiap item unik)
                     const price = Math.abs(log.point_change);
                     if (price === 50) itemName = 'Sihir Double Poin ✨';
@@ -562,8 +572,8 @@ const getPointHistory = async (req, res) => {
                     else if (log.action_type.includes('extra_life')) itemName = 'Extra Life 💖';
 
                     title = `Kamu membeli item <strong>${itemName}</strong>`;
-                    isPositive = false; 
-                    pts = `-${price}`; 
+                    isPositive = false;
+                    pts = `-${price}`;
                     icon = '🛍️';
                 }
                 else if (log.action_type === 'serang_berhasil') {
@@ -611,9 +621,9 @@ const getSatpamLogs = async (req, res) => {
         // [FIX] Tambahkan subject dan week di dalam select!
         const { data, error } = await supabase
             .from('satpam_logs')
-            .select('photo_url, subject, week') 
+            .select('photo_url, subject, week')
             .eq('student_id', id);
-            
+
         if (error) throw error;
         res.status(200).json({ status: 'success', data });
     } catch (error) {
@@ -621,13 +631,33 @@ const getSatpamLogs = async (req, res) => {
     }
 };
 
-module.exports = { 
-    addStudent, 
-    getAllStudents, 
-    getStudent, 
-    updateStudentInfo, 
+// ===============================================
+// FUNGSI BARU: AMBIL FOTO DARI UJIAN
+// ===============================================
+const getExamCaptures = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { data, error } = await supabase
+            .from('exam_results')
+            .select('capture_url, created_at')
+            .eq('student_id', id)
+            .not('capture_url', 'is', null) // Hanya ambil yang ada fotonya
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        res.status(200).json({ status: 'success', data: data || [] });
+    } catch (error) {
+        res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+
+module.exports = {
+    addStudent,
+    getAllStudents,
+    getStudent,
+    updateStudentInfo,
     removeStudent,
-    getStudentRaports, 
+    getStudentRaports,
     getStudentConsultations,
     getStudentAttendance,
     toggleInfaqCan,
@@ -638,5 +668,6 @@ module.exports = {
     getLatestStudentPhoto,
     getStudentsWithStats,
     getPointHistory,
-    getSatpamLogs
+    getSatpamLogs,
+    getExamCaptures
 };
