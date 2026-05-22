@@ -11,8 +11,9 @@ const normalizeText = (text = '') => {
         .replace(/\s+/g, ' ');
 };
 
-const getBaseReward = (level) => {
-    return level <= 5 ? 5 : 10;
+const getBaseReward = (level, eventCoinBase = 5) => {
+    const base = Number(eventCoinBase) || 5;
+    return level <= 5 ? base : base + 5;
 };
 
 const getComboReward = (timeTakenSeconds) => {
@@ -117,9 +118,9 @@ const getDailyChallengeState = async (req, res) => {
 
 const submitDailyChallengeLevel = async (req, res) => {
     try {
-        // Terima client_date dari body
+        // 1. Tambahkan event_coin di sini
         const {
-            student_id, level, sentence_id, typed_text, time_taken_seconds, preview = false, client_date
+            student_id, level, sentence_id, typed_text, time_taken_seconds, preview = false, client_date, event_coin
         } = req.body;
 
         const isPreview = preview === true;
@@ -148,6 +149,7 @@ const submitDailyChallengeLevel = async (req, res) => {
             });
         }
 
+        // Variabel ini bernama isCorrect (bukan is_correct)
         const isCorrect = normalizeText(typed_text) === normalizeText(sentence.sentence);
 
         if (!isCorrect) {
@@ -157,13 +159,16 @@ const submitDailyChallengeLevel = async (req, res) => {
                 data: { is_correct: false }
             });
         }
+
         const today = client_date || getTodayDate();
-        const baseReward = getBaseReward(Number(level));
+
+        // 2. Langsung masukkan event_coin ke fungsi getBaseReward (Tidak perlu is_correct lagi)
+        const baseReward = getBaseReward(Number(level), event_coin);
         const comboMultiplier = getComboMultiplier(Number(time_taken_seconds || 999));
 
-        // Kalkulasi total (Misal base 20 x combo 4 = 80 Koin)
+        // Kalkulasi total
         const totalReward = baseReward * comboMultiplier;
-        const comboReward = totalReward - baseReward; // Sisa bonus combo untuk disimpan ke DB
+        const comboReward = totalReward - baseReward;
 
         if (isPreview) {
             return res.status(200).json({
