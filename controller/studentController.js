@@ -651,6 +651,30 @@ const getExamCaptures = async (req, res) => {
     }
 };
 
+const verifyStudentPin = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { pin } = req.body;
+
+        const { data, error } = await supabase
+            .from('students')
+            .select('pin')
+            .eq('id', id)
+            .single();
+
+        if (error) throw error;
+
+        // Cek apakah PIN cocok
+        if (data.pin !== pin) {
+            return res.status(400).json({ status: 'error', message: 'PIN yang dimasukkan salah.' });
+        }
+
+        res.json({ status: 'success', message: 'PIN Benar' });
+    } catch (error) {
+        res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+
 module.exports = {
     addStudent,
     getAllStudents,
@@ -669,5 +693,6 @@ module.exports = {
     getStudentsWithStats,
     getPointHistory,
     getSatpamLogs,
-    getExamCaptures
+    getExamCaptures,
+    verifyStudentPin
 };
