@@ -19,6 +19,7 @@ const notificationRouter = require('./router/notificationRouter');
 const oralExamRouter = require('./router/oralExamRouter');
 const dailyChallengeRouter = require('./router/dailyChallengeRouter');
 const rewardRouter = require('./router/digitalRewardRouter');
+const feedbackRouter = require('./router/feedbackRouter');
 
 // 1. Konfigurasi CORS (Sangat penting agar Frontend di Vercel bisa akses)
 app.use(cors({
@@ -59,6 +60,7 @@ app.use('/api/notifications', notificationRouter);
 app.use('/api/oral-exams', oralExamRouter);
 app.use('/api/daily-challenge', dailyChallengeRouter);
 app.use('/api/digital-rewards',rewardRouter);
+app.use('/api/feedbacks', feedbackRouter);
 
 // 4. Export untuk dibaca oleh platform Serverless Vercel
 module.exports = app;

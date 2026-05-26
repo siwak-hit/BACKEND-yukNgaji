@@ -30,9 +30,41 @@ const addStudent = async (req, res) => {
 const getAllStudents = async (req, res) => {
     try {
         const teacherUsername = req.user.username;
+
+        // 1. Ambil daftar siswa dasar
         const students = await studentModel.getStudentsByTeacher(teacherUsername);
 
-        res.status(200).json({ status: "success", data: students });
+        if (!students || students.length === 0) {
+            return res.status(200).json({ status: "success", data: [] });
+        }
+
+        const studentIds = students.map(s => s.id);
+
+        // 2. Ambil data ujian akhir (exam_results) untuk semua siswa milik guru ini
+        const { data: exams, error: examsErr } = await supabase
+            .from('exam_results')
+            .select('student_id, subject')
+            .in('student_id', studentIds);
+
+        if (examsErr) throw examsErr;
+
+        // 3. Sisipkan flag is_exams_completed ke masing-masing siswa
+        const enrichedStudents = students.map(s => {
+            const sExams = (exams || []).filter(e => e.student_id === s.id);
+
+            // Murid dianggap selesai jika sudah memiliki record untuk ke-3 mapel ini
+            const is_exams_completed =
+                sExams.some(e => e.subject === 'tajwid') &&
+                sExams.some(e => e.subject === 'fiqih') &&
+                sExams.some(e => e.subject === 'tauhid');
+
+            return {
+                ...s,
+                is_exams_completed // Flag ini yang dibaca oleh Frontend (index.astro)
+            };
+        });
+
+        res.status(200).json({ status: "success", data: enrichedStudents });
     } catch (error) {
         res.status(500).json({ status: "error", message: error.message });
     }
