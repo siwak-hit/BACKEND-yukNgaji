@@ -289,10 +289,9 @@ const submitAndGradeAnswers = async (req, res) => {
         if (finalScore >= 80) category = 'A';
         else if (finalScore >= 60) category = 'B';
         const coinMultiplier = req.body.coin_multiplier || 1;
-        // [BARU] Bonus tetap 75 koin untuk setiap tugas yang berhasil diselesaikan.
-        // Dimasukkan ke base reward agar item "Double Koin" ikut melipatgandakannya.
-        const TASK_COMPLETION_BONUS = 75;
-        const poinRewardDikalikan = (finalScore + TASK_COMPLETION_BONUS) * coinMultiplier;
+        // Koin reward = nilai akhir × pengganda (hanya >1 kalau benar-benar pakai Double/Triple Koin).
+        // (Bonus tetap +75 dihapus karena membuat koin terasa "dobel" padahal user tak beli item.)
+        const poinRewardDikalikan = finalScore * coinMultiplier;
 
         // 4. Update Saldo Uang dan Kurangi Item jika dipakai
         if (studentInfo) {

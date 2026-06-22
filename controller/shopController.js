@@ -166,15 +166,17 @@ const getPeers = async (req, res) => {
         // 1. Ambil semua murid selain diri sendiri
         let { data: peers, error } = await supabase
             .from('students')
-            .select('id, name, poin, is_shield_active, shield_activated_at, item_perisai')
+            .select('id, name, poin, is_shield_active, shield_activated_at, item_perisai, is_bullied')
             .neq('id', student_id);
 
         if (error) throw error;
 
         // 2. Format status perisai (perisai dianggap aktif hanya jika belum lewat 12 jam)
+        //    + bawa is_bullied agar yang sudah "dipesan" untuk dibully tak bisa dibully lagi.
         peers = peers.map(p => ({
             ...p,
-            has_shield: (p.is_shield_active && isShieldStillValid(p.shield_activated_at)) || p.item_perisai > 0
+            has_shield: (p.is_shield_active && isShieldStillValid(p.shield_activated_at)) || p.item_perisai > 0,
+            is_bullied: !!p.is_bullied
         }));
 
         // 3. [FIX] Filter JIKA mode = 'khusus' (Hanya untuk PR ini yang belum selesai)
