@@ -22,7 +22,7 @@ const getExamsByTeacher = async (username) => {
 const getExamDetail = async (examId) => {
     const { data: exam, error: examErr } = await supabase
         .from('exams')
-        .select('id, title, subject, duration_minutes, is_active, is_daring, deadline_at') 
+        .select('id, title, subject, duration_minutes, is_active, is_daring, deadline_at, extended_students')
         .eq('id', examId)
         .single();
     if (examErr) throw examErr;

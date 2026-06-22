@@ -201,6 +201,7 @@ const getStudentAttendance = async (req, res) => {
         let izin = 0;
         let alpa = 0;
         let todayStatus = null;
+        const hadirDates = [];
         const izinDates = [];
         const alpaDates = [];
 
@@ -223,6 +224,7 @@ const getStudentAttendance = async (req, res) => {
 
             if (status === 'hadir') {
                 hadir++;
+                hadirDates.push({ date: att.date, status });
             } else if (isMandatory) {
                 if (status.startsWith('izin')) {
                     izin++;
@@ -245,7 +247,7 @@ const getStudentAttendance = async (req, res) => {
             status: "success",
             data: {
                 stats: { hadir, izin, alpa },
-                detail: { izinDates, alpaDates },
+                detail: { hadirDates, izinDates, alpaDates },
                 todayStatus,
                 performance
             }
@@ -253,6 +255,65 @@ const getStudentAttendance = async (req, res) => {
 
     } catch (error) {
         console.error("Get Student Attendance Error:", error.message);
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+const updateStudentAttendanceStatus = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { date, newStatus } = req.body;
+        const username = req.user.username;
+
+        // 1. Cari absensi pada tanggal tersebut
+        const { data: att, error } = await supabase
+            .from('attendances')
+            .select('*')
+            .eq('date', date)
+            .eq('created_by', username)
+            .single();
+
+        if (error) throw error;
+
+        // 2. Modifikasi objek present_students (catat status LAMA dulu untuk hitung delta koin)
+        const oldStatus = att.present_students?.[id]?.status || null;
+        const present_students = { ...att.present_students };
+        if (present_students[id]) {
+            present_students[id].status = newStatus;
+        } else {
+            present_students[id] = { status: newStatus };
+        }
+
+        // 3. Simpan perubahan
+        const { error: updateErr } = await supabase
+            .from('attendances')
+            .update({ present_students })
+            .eq('id', att.id);
+
+        if (updateErr) throw updateErr;
+
+        // 4. Koin absensi: HADIR +10, ALPA (tanpa keterangan) -5.
+        //    Pakai delta dari status lama→baru supaya tidak dobel saat status dikoreksi.
+        let coinDelta = 0;
+        if (oldStatus === 'hadir' && newStatus !== 'hadir') coinDelta -= 10;
+        if (oldStatus !== 'hadir' && newStatus === 'hadir') coinDelta += 10;
+        if (oldStatus === 'alpa' && newStatus !== 'alpa') coinDelta += 5;
+        if (oldStatus !== 'alpa' && newStatus === 'alpa') coinDelta -= 5;
+
+        if (coinDelta !== 0) {
+            try {
+                const { data: stu } = await supabase.from('students').select('poin').eq('id', id).single();
+                if (stu) {
+                    const newPoin = Math.max(0, (stu.poin || 0) + coinDelta);
+                    await supabase.from('students').update({ poin: newPoin }).eq('id', id);
+                }
+            } catch (coinErr) {
+                console.error("Gagal update koin absensi:", coinErr.message);
+            }
+        }
+
+        res.status(200).json({ status: "success", message: "Absensi diperbarui", coin_delta: coinDelta });
+    } catch (error) {
         res.status(500).json({ status: "error", message: error.message });
     }
 };
@@ -683,6 +744,24 @@ const getExamCaptures = async (req, res) => {
     }
 };
 
+// Rekaman suara mic per ujian (untuk tombol play di halaman wrapped).
+const getExamRecordings = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { data, error } = await supabase
+            .from('exam_results')
+            .select('recording_url, subject, created_at')
+            .eq('student_id', id)
+            .not('recording_url', 'is', null)
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        res.status(200).json({ status: 'success', data: data || [] });
+    } catch (error) {
+        res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+
 const verifyStudentPin = async (req, res) => {
     try {
         const { id } = req.params;
@@ -726,5 +805,7 @@ module.exports = {
     getPointHistory,
     getSatpamLogs,
     getExamCaptures,
+    getExamRecordings,
+    updateStudentAttendanceStatus,
     verifyStudentPin
 };

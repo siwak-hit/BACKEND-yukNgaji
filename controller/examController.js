@@ -138,7 +138,7 @@ const removeExam = async (req, res) => {
 const submitExamResult = async (req, res) => {
     try {
         const examId = req.params.id;
-        const { student_id, subject, student_answers, capture_base64 } = req.body;
+        const { student_id, subject, student_answers, capture_base64, audio_base64 } = req.body;
 
         // ===============================================================
         // 1. VALIDASI INPUT DASAR
@@ -167,6 +167,42 @@ const submitExamResult = async (req, res) => {
         }
 
         // ===============================================================
+        // 2b. [BARU] CEK DEADLINE DARING + DISPENSASI PER-MURID (mirror PR)
+        //     Gate otoritatif: tanpa lolos di sini, nilai tidak akan tersimpan.
+        // ===============================================================
+        let latePenalty = false;
+        {
+            const { data: examGate } = await supabase
+                .from('exams')
+                .select('is_daring, deadline_at, extended_students')
+                .eq('id', examId)
+                .single();
+
+            if (examGate && examGate.is_daring && examGate.deadline_at) {
+                const now = new Date();
+                const deadline = new Date(examGate.deadline_at);
+
+                let extList = examGate.extended_students;
+                try { while (typeof extList === 'string') extList = JSON.parse(extList); } catch (e) {}
+                if (!Array.isArray(extList)) extList = [];
+
+                const extRecord = extList.find(ext => (typeof ext === 'object' ? ext.student_id : ext) === student_id);
+
+                if (!extRecord) {
+                    if (now > deadline) {
+                        return res.status(403).json({ status: "error", message: "Waktu ujian sudah habis! Minta perpanjangan waktu ke Ustadz dulu ya." });
+                    }
+                } else {
+                    const extUntil = extRecord.until ? new Date(extRecord.until) : null;
+                    if (extUntil && now > extUntil) {
+                        return res.status(403).json({ status: "error", message: "Waktu perpanjangan kamu sudah habis juga!" });
+                    }
+                    if (extRecord.penalty) latePenalty = true; // potong 10% saat scoring
+                }
+            }
+        }
+
+        // ===============================================================
         // 3. PROSES UPLOAD FOTO KAMERA (Jika Ada)
         // ===============================================================
         let capture_url = null;
@@ -186,6 +222,35 @@ const submitExamResult = async (req, res) => {
                 }
             } catch (err) {
                 console.error("Gagal memproses foto kamera:", err);
+            }
+        }
+
+        // ===============================================================
+        // 3b. PROSES UPLOAD REKAMAN SUARA MIC (Jika Ada) — pola sama seperti foto.
+        //     Bucket Supabase Storage: 'exam_recordings'. Kolom DB: 'recording_url'.
+        // ===============================================================
+        let recording_url = null;
+        if (audio_base64) {
+            try {
+                const mimeMatch = String(audio_base64).match(/^data:(audio\/[\w.+-]+);base64,/);
+                const audioMime = mimeMatch ? mimeMatch[1] : 'audio/webm';
+                const ext = audioMime.includes('mp4') ? 'm4a' : (audioMime.includes('ogg') ? 'ogg' : 'webm');
+                const base64Audio = String(audio_base64).replace(/^data:audio\/[\w.+-]+;base64,/, "");
+                const audioBuffer = Buffer.from(base64Audio, 'base64');
+                const audioFileName = `recording_${examId}_${student_id}_${Date.now()}.${ext}`;
+
+                const { error: audioUploadError } = await supabase.storage
+                    .from('exam_recordings')
+                    .upload(audioFileName, audioBuffer, { contentType: audioMime, upsert: true });
+
+                if (!audioUploadError) {
+                    const { data: audioPublicUrlData } = supabase.storage.from('exam_recordings').getPublicUrl(audioFileName);
+                    if (audioPublicUrlData) recording_url = audioPublicUrlData.publicUrl;
+                } else {
+                    console.error("Gagal upload rekaman suara:", audioUploadError.message);
+                }
+            } catch (err) {
+                console.error("Gagal memproses rekaman suara:", err);
             }
         }
 
@@ -218,7 +283,10 @@ const submitExamResult = async (req, res) => {
         });
 
         const totalSoal = dbQuestions.length || 1; // Cegah bagi 0
-        const calculatedScore = Math.round((correctCount / totalSoal) * 100);
+        let calculatedScore = Math.round((correctCount / totalSoal) * 100);
+
+        // [BARU] Denda telat 10% jika murid pakai dispensasi ber-penalty
+        if (latePenalty) calculatedScore = Math.floor(calculatedScore * 0.9);
 
         // ===============================================================
         // 5. SIMPAN HASIL KE DATABASE (Insert Baru)
@@ -230,9 +298,10 @@ const submitExamResult = async (req, res) => {
             subject,
             score: calculatedScore,
             student_answers: student_answers,
-            capture_url
+            capture_url,
+            recording_url
         }])
-        .select('id, student_id, exam_id, subject, score, capture_url, created_at')
+        .select('id, student_id, exam_id, subject, score, capture_url, recording_url, created_at')
         .single();
 
         if (insertError) throw insertError;
@@ -707,6 +776,49 @@ const markRetakePermissionUsed = async (req, res) => {
     }
 };
 
+// [BARU] Guru memberi perpanjangan deadline per-murid utk ujian daring (mirror PR)
+const grantExamExtension = async (req, res) => {
+    try {
+        const examId = req.params.id;
+        const username = req.user.username;
+        const { student_id, extension_until, with_penalty } = req.body;
+
+        if (!student_id || !extension_until) {
+            return res.status(400).json({ status: "error", message: "Data tidak lengkap." });
+        }
+
+        // Pastikan ujian milik guru ini
+        const { data: exam, error: examErr } = await supabase
+            .from('exams')
+            .select('id, created_by, extended_students')
+            .eq('id', examId)
+            .single();
+
+        if (examErr || !exam) return res.status(404).json({ status: "error", message: "Ujian tidak ditemukan." });
+        if (exam.created_by !== username) return res.status(403).json({ status: "error", message: "Kamu tidak punya akses ke ujian ini." });
+
+        let extended = exam.extended_students || [];
+        try { while (typeof extended === 'string') extended = JSON.parse(extended); } catch (e) {}
+        if (!Array.isArray(extended)) extended = [];
+
+        // Hapus dispensasi lama murid ini, lalu masukkan yang baru (+flag penalty)
+        extended = extended.filter(ext => (typeof ext === 'object' ? ext.student_id : ext) !== student_id);
+        extended.push({ student_id, until: extension_until, penalty: !!with_penalty });
+
+        const { error: updErr } = await supabase
+            .from('exams')
+            .update({ extended_students: extended })
+            .eq('id', examId);
+
+        if (updErr) throw updErr;
+
+        res.status(200).json({ status: "success", message: "Perpanjangan diberikan!" });
+    } catch (error) {
+        console.error("Grant Exam Extension Error:", error);
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
 const buyExamHint = async (req, res) => {
     try {
         const { student_id, cost = 50, exam_id, question_id } = req.body;
@@ -794,5 +906,6 @@ module.exports = {
     createRetakePermission,
     checkRetakePermission,
     buyExamHint,
-    markRetakePermissionUsed
+    markRetakePermissionUsed,
+    grantExamExtension
 };

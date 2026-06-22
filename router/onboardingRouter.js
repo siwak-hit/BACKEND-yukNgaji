@@ -42,6 +42,11 @@ router.post('/upload-satpam', onboardingController.uploadSatpamPhoto);
 router.post('/pr-extension', onboardingController.grantExtension);
 router.get('/pr-locks-detail', onboardingController.getPRLockDetail);
 
+// Permintaan & persetujuan perpanjangan waktu PR (dispensasi)
+router.post('/pr-extension-request', onboardingController.requestExtension);
+router.get('/pr-extension-requests', onboardingController.getExtensionRequests);
+router.post('/pr-extension-respond', onboardingController.respondExtension);
+
 router.post('/transfer-reward', onboardingController.transferRewardCoin);
 router.get('/check-satpam', onboardingController.checkSatpamStatus);
 

@@ -7,6 +7,16 @@ const ITEM_PRICES = {
     item_extra_life: 150
 };
 
+// Perisai aktif selama 12 jam sejak diaktifkan (bukan lagi reset tengah malam).
+const SHIELD_DURATION_MS = 12 * 60 * 60 * 1000;
+
+// True kalau perisai masih dalam 12 jam sejak shield_activated_at.
+const isShieldStillValid = (activatedAt) => {
+    if (!activatedAt) return false;
+    const elapsed = Date.now() - new Date(activatedAt).getTime();
+    return elapsed >= 0 && elapsed < SHIELD_DURATION_MS;
+};
+
 // 1. BELI ITEM
 const buyItem = async (req, res) => {
     try {
@@ -102,16 +112,13 @@ const attackFriend = async (req, res) => {
         let actionType = "";
         let newActorPoin = actor.poin; 
 
-        // --- VALIDASI "MIDNIGHT RESET" ---
+        // --- VALIDASI MASA AKTIF PERISAI (12 JAM) ---
         let isTargetShielded = target.is_shield_active;
-        const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
 
-        if (isTargetShielded && target.shield_activated_at) {
-            const targetDateStr = new Date(target.shield_activated_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
-            if (targetDateStr !== todayStr) {
-                isTargetShielded = false; 
-                await supabase.from('students').update({ is_shield_active: false, shield_activated_at: null }).eq('id', target_id);
-            }
+        if (isTargetShielded && !isShieldStillValid(target.shield_activated_at)) {
+            // Perisai sudah lewat 12 jam → matikan.
+            isTargetShielded = false;
+            await supabase.from('students').update({ is_shield_active: false, shield_activated_at: null }).eq('id', target_id);
         }
 
         // Skenario A: Target punya perisai aktif
@@ -120,14 +127,17 @@ const attackFriend = async (req, res) => {
             message = `Serangan gagal! ${target.name} sedang dilindungi Perisai Sihir.`;
             actionType = 'serang_ditahan';
             targetPoinLompat = 0;
-        } 
+        }
         // Skenario B: Target rentan (Berhasil dicuri)
         else {
-            const poinHilang = Math.min(target.poin, targetPoinLompat); 
+            const poinHilang = Math.min(target.poin, targetPoinLompat);
             newActorPoin = actor.poin + poinHilang;
-            
-            await supabase.from('students').update({ item_serang: actor.item_serang - 1, poin: newActorPoin }).eq('id', actor_id);
-            await supabase.from('students').update({ poin: target.poin - poinHilang }).eq('id', target_id);
+
+            // [OPTIMASI] Dua update independen dijalankan paralel biar lebih cepat.
+            await Promise.all([
+                supabase.from('students').update({ item_serang: actor.item_serang - 1, poin: newActorPoin }).eq('id', actor_id),
+                supabase.from('students').update({ poin: target.poin - poinHilang }).eq('id', target_id)
+            ]);
 
             message = `Serangan berhasil! Kamu mencuri ${poinHilang} poin dari ${target.name}.`;
             actionType = 'serang_berhasil';
@@ -156,15 +166,15 @@ const getPeers = async (req, res) => {
         // 1. Ambil semua murid selain diri sendiri
         let { data: peers, error } = await supabase
             .from('students')
-            .select('id, name, poin, is_shield_active, item_perisai')
+            .select('id, name, poin, is_shield_active, shield_activated_at, item_perisai')
             .neq('id', student_id);
-        
+
         if (error) throw error;
 
-        // 2. Format status perisai
+        // 2. Format status perisai (perisai dianggap aktif hanya jika belum lewat 12 jam)
         peers = peers.map(p => ({
             ...p,
-            has_shield: p.is_shield_active || p.item_perisai > 0
+            has_shield: (p.is_shield_active && isShieldStillValid(p.shield_activated_at)) || p.item_perisai > 0
         }));
 
         // 3. [FIX] Filter JIKA mode = 'khusus' (Hanya untuk PR ini yang belum selesai)
@@ -231,14 +241,14 @@ const claimWelcomeBonus = async (req, res) => {
         if (fetchErr) throw fetchErr;
         if (student.has_claimed_bonus) return res.status(400).json({ status: "error", message: "Bonus ini sudah pernah kamu ambil!" });
 
-        const newPoin = (student.poin || 0) + 50;
+        const newPoin = (student.poin || 0) + 100;
         const { error: updateErr } = await supabase.from('students').update({ poin: newPoin, has_claimed_bonus: true }).eq('id', student_id);
 
         if (updateErr) throw updateErr;
         await supabase.from('gamification_logs').insert([{
             actor_id: student_id,
             action_type: 'bonus_welcome',
-            point_change: 50,
+            point_change: 100,
             is_read: true
         }]);
         res.status(200).json({ status: "success", data: { poin: newPoin } });
@@ -261,6 +271,21 @@ const purchaseInstantEffect = async (req, res) => {
         if (fetchError || !student) throw fetchError;
         if (student.poin < cost) return res.status(400).json({ status: "error", message: "Koin tidak cukup!" });
 
+        // [B] Bully hanya boleh SEKALI per korban sampai sistem bully-nya selesai.
+        //     Cek dulu SEBELUM potong koin supaya pembeli tidak rugi koin kalau gagal.
+        if (effect_type === 'bully' && target_id) {
+            const { data: targetStu } = await supabase
+                .from('students')
+                .select('is_bullied, name')
+                .eq('id', target_id)
+                .single();
+
+            if (targetStu?.is_bullied) {
+                const nick = targetStu.name ? targetStu.name.split(' ')[0] : 'Teman ini';
+                return res.status(400).json({ status: "error", message: `${nick} sedang dibully orang lain. Tunggu sampai selesai dulu ya!` });
+            }
+        }
+
         // 2. Potong Saldo
         const newPoin = student.poin - cost;
         await supabase.from('students').update({ poin: newPoin }).eq('id', student_id);
@@ -271,13 +296,13 @@ const purchaseInstantEffect = async (req, res) => {
             await supabase.from('students').update({ is_bullied: true }).eq('id', target_id);
 
             // Simpan log lengkap dengan nama pelakunya
-            await supabase.from('gamification_logs').insert([{ 
-                actor_id: student_id, 
-                target_id: target_id, 
-                action_type: 'bully', 
+            await supabase.from('gamification_logs').insert([{
+                actor_id: student_id,
+                target_id: target_id,
+                action_type: 'bully',
                 attacker_name: student.name, // <--- [FIX] Simpan nama di sini
-                point_change: 0, 
-                is_read: false 
+                point_change: 0,
+                is_read: false
             }]);
         }
 

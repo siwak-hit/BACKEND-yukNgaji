@@ -242,11 +242,57 @@ const submitAndGradeAnswers = async (req, res) => {
             if (finalScore > 100) finalScore = 100; // Cap maksimal
         }
 
+        // =======================================================
+        // [PR] Cek deadline & dispensasi SEBELUM nilai + koin disimpan.
+        // (Sebelumnya pengecekan ada di bawah SETELAH insert, sehingga
+        //  potongan nilai tidak pernah benar-benar tersimpan — itu bug.)
+        // =======================================================
+        if (is_pr) {
+            const { data: prLock } = await supabase
+                .from('pr_locks')
+                .select('deadline_at, extended_students')
+                .eq('subject', subject)
+                .eq('week', week)
+                .single();
+
+            if (prLock && prLock.deadline_at) {
+                const now = new Date();
+                const originalDeadline = new Date(prLock.deadline_at);
+
+                let extList = prLock.extended_students;
+                try { while (typeof extList === 'string') extList = JSON.parse(extList); } catch (e) {}
+                if (!Array.isArray(extList)) extList = [];
+
+                const extRecord = extList.find(ext => (typeof ext === 'object' ? ext.student_id : ext) === student_id);
+
+                if (!extRecord) {
+                    // Tidak punya dispensasi → wajib di dalam deadline normal
+                    if (now > originalDeadline) {
+                        return res.status(403).json({ status: "error", message: "Waktu PR habis! Minta perpanjangan waktu ke Ustadz dulu ya." });
+                    }
+                } else {
+                    // Punya dispensasi → cek batas dispensasinya
+                    const extUntil = extRecord.until ? new Date(extRecord.until) : null;
+                    if (extUntil && now > extUntil) {
+                        return res.status(403).json({ status: "error", message: "Waktu dispensasi kamu sudah habis juga!" });
+                    }
+                    // Denda telat HANYA jika guru memilih "potong nilai" saat menyetujui
+                    if (extRecord.penalty) {
+                        finalScore = Math.floor(finalScore * 0.9);
+                        notesArr.push("⚠️ Denda Terlambat (Dispensasi): Nilai dipotong 10%");
+                    }
+                }
+            }
+        }
+
         let category = 'C';
         if (finalScore >= 80) category = 'A';
         else if (finalScore >= 60) category = 'B';
         const coinMultiplier = req.body.coin_multiplier || 1;
-        const poinRewardDikalikan = finalScore * coinMultiplier;
+        // [BARU] Bonus tetap 75 koin untuk setiap tugas yang berhasil diselesaikan.
+        // Dimasukkan ke base reward agar item "Double Koin" ikut melipatgandakannya.
+        const TASK_COMPLETION_BONUS = 75;
+        const poinRewardDikalikan = (finalScore + TASK_COMPLETION_BONUS) * coinMultiplier;
 
         // 4. Update Saldo Uang dan Kurangi Item jika dipakai
         if (studentInfo) {
@@ -280,43 +326,16 @@ const submitAndGradeAnswers = async (req, res) => {
                 score: finalScore,
                 category,
                 student_answers,
-                notes: isItemUsed ? "Koreksi Sihir ✨ (Double Poin Aktif)" : "Koreksi otomatis oleh sistem",
+                notes: (() => {
+                    const arr = [...notesArr];
+                    if (isItemUsed) arr.unshift("Koreksi Sihir ✨ (Double Poin Aktif)");
+                    return arr.length ? arr.join(' • ') : "Koreksi otomatis oleh sistem";
+                })(),
                 is_pr: is_pr || false,
                 time_taken: time_taken || 0
             }]);
 
         if (resultError) throw resultError;
-
-        // Di dalam controller submit-grade lu:
-        if (is_pr) {
-            const { data: prLock } = await supabase.from('pr_locks').select('*').eq('subject', subject).eq('week', week).single();
-            if (prLock && prLock.deadline_at) {
-                const now = new Date();
-                const originalDeadline = new Date(prLock.deadline_at);
-
-                // Cari data dispensasi anak ini
-                let extRecord = null;
-                if (prLock.extended_students && Array.isArray(prLock.extended_students)) {
-                    extRecord = prLock.extended_students.find(ext => ext.student_id === student_id);
-                }
-
-                if (!extRecord) {
-                    // TIDAK PUNYA DISPENSASI -> Cek pakai deadline normal
-                    if (now > originalDeadline) {
-                        return res.status(403).json({ status: "error", message: "Waktu PR habis! Minta dispensasi ke Ustadz dulu ya." });
-                    }
-                } else {
-                    // PUNYA DISPENSASI -> Cek pakai deadline dispensasi
-                    const extDeadline = new Date(extRecord.until);
-                    if (now > extDeadline) {
-                        return res.status(403).json({ status: "error", message: "Waktu Dispensasi kamu juga sudah habis!" });
-                    }
-                    // Denda telat 10%
-                    finalScore = Math.floor(finalScore * 0.9);
-                    notesArr.push("⚠️ Denda Terlambat (Dispensasi): Nilai dipotong 10%");
-                }
-            }
-        }
 
         // [BARU] 6. Buat Notifikasi jika ini adalah PR
         if (is_pr) {
@@ -746,13 +765,143 @@ const grantExtension = async (req, res) => {
         // Bersihkan data lama jika anak ini pernah dikasih dispensasi
         extended = extended.filter(ext => typeof ext === 'object' ? ext.student_id !== student_id : ext !== student_id);
 
-        // Masukkan objek dispensasi baru (ID + Deadline)
-        extended.push({ student_id, until: extension_until });
+        // Masukkan objek dispensasi baru (ID + Deadline + flag potong nilai)
+        extended.push({ student_id, until: extension_until, penalty: !!req.body.with_penalty });
 
         await supabase.from('pr_locks').update({ extended_students: extended }).eq('subject', subject).eq('week', week);
         res.status(200).json({ status: 'success', message: 'Dispensasi diberikan!' });
     } catch (error) {
         res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+
+// =======================================================
+// FITUR PERMINTAAN PERPANJANGAN WAKTU PR (DISPENSASI)
+// =======================================================
+
+// [MURID] Mengajukan permintaan perpanjangan + alasan telat
+const requestExtension = async (req, res) => {
+    try {
+        const { student_id, subject, week, reason } = req.body;
+        if (!student_id || !subject || !week) {
+            return res.status(400).json({ status: "error", message: "Data tidak lengkap." });
+        }
+
+        // Ambil nama & guru pemilik (created_by) dari data murid
+        const { data: std } = await supabase
+            .from('students')
+            .select('name, created_by')
+            .eq('id', student_id)
+            .single();
+
+        if (!std) return res.status(404).json({ status: "error", message: "Murid tidak ditemukan." });
+
+        // Cegah duplikat: kalau sudah ada request pending utk PR yang sama, perbarui alasannya
+        const { data: existing } = await supabase
+            .from('pr_extension_requests')
+            .select('id')
+            .eq('student_id', student_id)
+            .eq('subject', subject)
+            .eq('week', parseInt(week))
+            .eq('status', 'pending')
+            .maybeSingle();
+
+        if (existing) {
+            await supabase
+                .from('pr_extension_requests')
+                .update({ reason: reason || null, created_at: new Date().toISOString() })
+                .eq('id', existing.id);
+            return res.status(200).json({ status: "success", message: "Permintaan diperbarui." });
+        }
+
+        const { error } = await supabase.from('pr_extension_requests').insert([{
+            student_id,
+            student_name: std.name || 'Anak',
+            subject,
+            week: parseInt(week),
+            reason: reason || null,
+            status: 'pending',
+            created_by: std.created_by || null
+        }]);
+
+        if (error) throw error;
+        res.status(201).json({ status: "success", message: "Permintaan perpanjangan terkirim." });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+// [GURU] Ambil daftar permintaan perpanjangan yang masih pending
+const getExtensionRequests = async (req, res) => {
+    try {
+        const username = req.user.username;
+        const { data, error } = await supabase
+            .from('pr_extension_requests')
+            .select('*')
+            .eq('created_by', username)
+            .eq('status', 'pending')
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        res.status(200).json({ status: "success", data: data || [] });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+// [GURU] Setujui permintaan: beri dispensasi (durasi pilihan guru) + opsi potong nilai
+const respondExtension = async (req, res) => {
+    try {
+        const username = req.user.username;
+        const { request_id, extension_until, with_penalty } = req.body;
+        if (!request_id || !extension_until) {
+            return res.status(400).json({ status: "error", message: "Data tidak lengkap." });
+        }
+
+        // Ambil request & pastikan milik guru ini
+        const { data: reqData, error: reqErr } = await supabase
+            .from('pr_extension_requests')
+            .select('*')
+            .eq('id', request_id)
+            .eq('created_by', username)
+            .single();
+
+        if (reqErr || !reqData) {
+            return res.status(404).json({ status: "error", message: "Permintaan tidak ditemukan." });
+        }
+
+        const { subject, week, student_id } = reqData;
+
+        // Ambil dispensasi yang sudah ada (kalau baris pr_locks-nya ada)
+        const { data: pr } = await supabase
+            .from('pr_locks')
+            .select('extended_students')
+            .eq('subject', subject)
+            .eq('week', week)
+            .single();
+
+        let extended = pr?.extended_students || [];
+        try { while (typeof extended === 'string') extended = JSON.parse(extended); } catch (e) {}
+        if (!Array.isArray(extended)) extended = [];
+
+        // Hapus dispensasi lama anak ini, lalu masukkan yang baru (+flag penalty)
+        extended = extended.filter(ext => (typeof ext === 'object' ? ext.student_id : ext) !== student_id);
+        extended.push({ student_id, until: extension_until, penalty: !!with_penalty });
+
+        // upsert: buat baris pr_locks kalau belum ada; deadline_at tidak ikut diubah
+        await supabase
+            .from('pr_locks')
+            .upsert({ subject, week, is_locked: true, extended_students: extended }, { onConflict: 'subject, week' });
+
+        // Tandai request sudah ditangani
+        await supabase
+            .from('pr_extension_requests')
+            .update({ status: 'granted', with_penalty: !!with_penalty, extension_until, responded_at: new Date().toISOString() })
+            .eq('id', request_id);
+
+        res.status(200).json({ status: "success", message: "Dispensasi diberikan!" });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
     }
 };
 
@@ -1202,6 +1351,9 @@ module.exports = {
     getPRLocks,
     uploadSatpamPhoto,
     grantExtension,
+    requestExtension,
+    getExtensionRequests,
+    respondExtension,
     getPRLockDetail,
     checkSatpamStatus,
     transferRewardCoin,

@@ -62,7 +62,9 @@ router.get('/:id/latest-photo', verifyToken, studentController.getLatestStudentP
 router.get('/:id/point-history', verifyToken, studentController.getPointHistory);
 router.get('/:id/satpam-logs', studentController.getSatpamLogs);
 router.get('/:id/exam-captures', verifyToken, studentController.getExamCaptures);
+router.get('/:id/exam-recordings', verifyToken, studentController.getExamRecordings);
 router.post('/:id/verify-pin', verifyToken, studentController.verifyStudentPin);
+router.put('/:id/attendance', verifyToken, studentController.updateStudentAttendanceStatus);
 
 router.post('/:id/murojaah', logMurojaah);
 

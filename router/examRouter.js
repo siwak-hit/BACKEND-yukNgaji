@@ -24,6 +24,9 @@ router.post('/buy-time', examController.buyExamTime);
 router.post('/buy-hint', examController.buyExamHint);
 router.post('/tutorial/complete', examController.completeExamTutorial);
 
+// Perpanjangan deadline per-murid (ujian daring) — mirror PR
+router.post('/:id/grant-extension', examController.grantExamExtension);
+
 // Retake permissions
 router.post('/:id/retake-permissions', examController.createRetakePermission);
 router.get('/:id/retake-permissions/check', examController.checkRetakePermission);
