@@ -230,6 +230,9 @@ const submitAndGradeAnswers = async (req, res) => {
         let finalScore = rawScore;
         let isItemUsed = false;
         let notesArr = [];
+        // [2.6] Lacak potongan nilai telat biar bisa ditampilkan di modal hasil murid.
+        let penaltyApplied = false;
+        let penaltyDeducted = 0;
 
         // 3. Terapkan Sihir Double Poin (JIKA DIA MEMINTA & JIKA DIA BENARAN PUNYA DI DB)
         if (is_double_score && studentInfo && studentInfo.item_double_score > 0) {
@@ -278,7 +281,10 @@ const submitAndGradeAnswers = async (req, res) => {
                     }
                     // Denda telat HANYA jika guru memilih "potong nilai" saat menyetujui
                     if (extRecord.penalty) {
+                        const beforePenalty = finalScore;
                         finalScore = Math.floor(finalScore * 0.9);
+                        penaltyApplied = true;
+                        penaltyDeducted = beforePenalty - finalScore;
                         notesArr.push("⚠️ Denda Terlambat (Dispensasi): Nilai dipotong 10%");
                     }
                 }
@@ -335,6 +341,15 @@ const submitAndGradeAnswers = async (req, res) => {
             }]);
 
         if (resultError) throw resultError;
+
+        // [Gap 1] Hapus checkpoint server karena tugas sudah selesai dikumpulkan.
+        try {
+            await supabase.from('pr_drafts')
+                .delete()
+                .eq('student_id', student_id)
+                .eq('subject', subject)
+                .eq('week', parseInt(week));
+        } catch (e) { /* abaikan: kegagalan hapus draft tidak boleh menggagalkan submit */ }
 
         // [BARU] 6. Buat Notifikasi jika ini adalah PR
         if (is_pr) {
@@ -422,7 +437,20 @@ const submitAndGradeAnswers = async (req, res) => {
         }
         // =========================================================
 
-        res.status(201).json({ status: "success", message: "Jawaban berhasil dikirim dan dinilai." });
+        // [2.6] Kembalikan rincian nilai + penalti supaya modal hasil murid akurat
+        // (sebelumnya client menampilkan nilai versinya sendiri tanpa potongan 10%).
+        res.status(201).json({
+            status: "success",
+            message: "Jawaban berhasil dikirim dan dinilai.",
+            data: {
+                raw_score: rawScore,
+                final_score: finalScore,
+                penalty_applied: penaltyApplied,
+                penalty_deducted: penaltyDeducted,
+                penalty_percent: penaltyApplied ? 10 : 0,
+                notes: notesArr
+            }
+        });
     } catch (error) {
         console.error("Auto-Grade Error:", error.message);
         res.status(500).json({ status: "error", message: error.message });
@@ -738,14 +766,20 @@ const getQuestionsSummaryAll = async (req, res) => {
 // =======================================================
 const togglePRLock = async (req, res) => {
     try {
-        const { subject, week, is_locked, deadline_at } = req.body;
-        // Upsert data
-        const { error } = await supabase.from('pr_locks').upsert({
-            subject,
-            week,
-            is_locked,
-            deadline_at: deadline_at || null
-        }, { onConflict: 'subject, week' });
+        const { subject, week, is_locked, deadline_at, duration_minutes } = req.body;
+
+        // Susun payload upsert. deadline_at & duration hanya ditimpa kalau dikirim,
+        // biar toggle gembok (tanpa kirim deadline) gak menghapus deadline lama.
+        const payload = { subject, week, is_locked };
+        if (deadline_at !== undefined) payload.deadline_at = deadline_at || null;
+
+        // [2.1] Durasi manual per tugas (menit -> detik). Kosong/0 = pakai default.
+        if (duration_minutes !== undefined) {
+            const mins = parseFloat(duration_minutes);
+            payload.duration_seconds = (!isNaN(mins) && mins > 0) ? Math.round(mins * 60) : null;
+        }
+
+        const { error } = await supabase.from('pr_locks').upsert(payload, { onConflict: 'subject, week' });
 
         if (error) throw error;
         res.status(200).json({ status: 'success' });
@@ -779,9 +813,11 @@ const grantExtension = async (req, res) => {
 // =======================================================
 
 // [MURID] Mengajukan permintaan perpanjangan + alasan telat
+// kind: 'late' (telat deadline) | 'extra_time' (nambah waktu di tengah)
 const requestExtension = async (req, res) => {
     try {
         const { student_id, subject, week, reason } = req.body;
+        const kind = req.body.kind === 'extra_time' ? 'extra_time' : 'late';
         if (!student_id || !subject || !week) {
             return res.status(400).json({ status: "error", message: "Data tidak lengkap." });
         }
@@ -795,20 +831,30 @@ const requestExtension = async (req, res) => {
 
         if (!std) return res.status(404).json({ status: "error", message: "Murid tidak ditemukan." });
 
-        // Cegah duplikat: kalau sudah ada request pending utk PR yang sama, perbarui alasannya
-        const { data: existing } = await supabase
+        // [2.7] Permohonan hanya SEKALI per PR. Ambil request terakhir (status apa pun).
+        const { data: prevRows } = await supabase
             .from('pr_extension_requests')
-            .select('id')
+            .select('id, status')
             .eq('student_id', student_id)
             .eq('subject', subject)
             .eq('week', parseInt(week))
-            .eq('status', 'pending')
-            .maybeSingle();
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+        const existing = prevRows && prevRows[0];
 
         if (existing) {
+            // Kalau sudah pernah DISETUJUI → tidak boleh minta lagi (kesempatan terpakai).
+            if (existing.status === 'granted') {
+                return res.status(409).json({
+                    status: "error", code: 'ALREADY_GRANTED',
+                    message: "Kamu sudah pernah dapat izin perpanjangan untuk tugas ini. Kesempatan tidak bisa dipakai dua kali."
+                });
+            }
+            // Masih pending → cukup perbarui alasan/kind (bukan dianggap permohonan baru).
             await supabase
                 .from('pr_extension_requests')
-                .update({ reason: reason || null, created_at: new Date().toISOString() })
+                .update({ reason: reason || null, kind, created_at: new Date().toISOString() })
                 .eq('id', existing.id);
             return res.status(200).json({ status: "success", message: "Permintaan diperbarui." });
         }
@@ -819,12 +865,87 @@ const requestExtension = async (req, res) => {
             subject,
             week: parseInt(week),
             reason: reason || null,
+            kind,
             status: 'pending',
             created_by: std.created_by || null
         }]);
 
         if (error) throw error;
         res.status(201).json({ status: "success", message: "Permintaan perpanjangan terkirim." });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+// [MURID] Cek status permohonan miliknya sendiri untuk PR ini (utk enforce sekali pakai)
+const getMyExtensionRequest = async (req, res) => {
+    try {
+        const { student_id, subject, week } = req.query;
+        if (!student_id || !subject || !week) {
+            return res.status(400).json({ status: "error", message: "Parameter tidak lengkap." });
+        }
+        const { data } = await supabase
+            .from('pr_extension_requests')
+            .select('id, status, kind, with_penalty, extension_until, is_used, reason, created_at')
+            .eq('student_id', student_id)
+            .eq('subject', subject)
+            .eq('week', parseInt(week))
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+        res.status(200).json({ status: "success", data: (data && data[0]) || null });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+// =======================================================
+// CHECKPOINT PR LINTAS-DEVICE (pr_drafts)
+// =======================================================
+// [MURID] Ambil checkpoint pengerjaan PR dari server (utk lanjut di HP lain)
+const getPRDraft = async (req, res) => {
+    try {
+        const { student_id, subject, week } = req.query;
+        if (!student_id || !subject || !week) {
+            return res.status(400).json({ status: "error", message: "Parameter tidak lengkap." });
+        }
+        const { data, error } = await supabase
+            .from('pr_drafts')
+            .select('question_ids, answers, current_index, session_end, updated_at')
+            .eq('student_id', student_id)
+            .eq('subject', subject)
+            .eq('week', parseInt(week))
+            .maybeSingle();
+
+        if (error && error.code !== 'PGRST116') throw error;
+        res.status(200).json({ status: "success", data: data || null });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+// [MURID] Simpan/timpa checkpoint (autosave berkala dari fill.astro)
+const savePRDraft = async (req, res) => {
+    try {
+        const { student_id, subject, week, question_ids, answers, current_index, session_end } = req.body;
+        if (!student_id || !subject || !week) {
+            return res.status(400).json({ status: "error", message: "Data tidak lengkap." });
+        }
+        const { error } = await supabase
+            .from('pr_drafts')
+            .upsert({
+                student_id,
+                subject,
+                week: parseInt(week),
+                question_ids: Array.isArray(question_ids) ? question_ids : [],
+                answers: answers || {},
+                current_index: Number.isInteger(current_index) ? current_index : 0,
+                session_end: session_end || null,
+                updated_at: new Date().toISOString()
+            }, { onConflict: 'student_id, subject, week' });
+
+        if (error) throw error;
+        res.status(200).json({ status: "success" });
     } catch (error) {
         res.status(500).json({ status: "error", message: error.message });
     }
@@ -975,19 +1096,21 @@ const getPRLockDetail = async (req, res) => {
             return res.status(400).json({ status: "error", message: "Subject dan week wajib diisi" });
         }
 
-        const { data, error } = await supabase
+        // [FIX BUG "Gagal memverifikasi waktu"] Jangan pakai .single().
+        // .single() melempar error 500 kalau baris pr_locks utk (subject, week) ada lebih
+        // dari satu (duplikat bisa muncul kalau constraint UNIQUE(subject, week) belum ada).
+        // Ambil semua baris yang cocok, lalu pilih yang terbaru biar fail-safe.
+        const { data: rows, error } = await supabase
             .from('pr_locks')
-            .select('deadline_at, extended_students')
+            .select('deadline_at, extended_students, duration_seconds, created_at')
             .eq('subject', subject)
-            .eq('week', week)
-            .single();
+            .eq('week', parseInt(week))
+            .order('created_at', { ascending: false });
 
-        // Abaikan error "PGRST116" (No rows returned) kalau datanya memang belum dibikin di database
-        if (error && error.code !== 'PGRST116') {
-            throw error;
-        }
+        if (error) throw error;
 
-        res.status(200).json({ status: 'success', data: data || {} });
+        const data = Array.isArray(rows) && rows.length > 0 ? rows[0] : {};
+        res.status(200).json({ status: 'success', data });
     } catch (err) {
         res.status(500).json({ status: 'error', message: err.message });
     }
@@ -1352,6 +1475,9 @@ module.exports = {
     grantExtension,
     requestExtension,
     getExtensionRequests,
+    getMyExtensionRequest,
+    getPRDraft,
+    savePRDraft,
     respondExtension,
     getPRLockDetail,
     checkSatpamStatus,

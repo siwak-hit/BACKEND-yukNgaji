@@ -45,6 +45,11 @@ router.get('/pr-locks-detail', onboardingController.getPRLockDetail);
 // Permintaan & persetujuan perpanjangan waktu PR (dispensasi)
 router.post('/pr-extension-request', onboardingController.requestExtension);
 router.get('/pr-extension-requests', onboardingController.getExtensionRequests);
+router.get('/pr-extension-mine', onboardingController.getMyExtensionRequest);
+
+// Checkpoint PR lintas-device
+router.get('/pr-draft', onboardingController.getPRDraft);
+router.post('/pr-draft', onboardingController.savePRDraft);
 router.post('/pr-extension-respond', onboardingController.respondExtension);
 
 router.post('/transfer-reward', onboardingController.transferRewardCoin);
