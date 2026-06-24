@@ -1056,10 +1056,13 @@ const uploadSatpamPhoto = async (req, res) => {
         const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
         const buffer = Buffer.from(base64Data, 'base64');
 
-        // [UPDATE] Format penamaan file sesuai request
-        // Hapus spasi dan karakter aneh dari nama biar URL-nya nggak rusak
+        // [FIX BUG FOTO SATPAM SAMA] Nama file WAJIB mengandung subject juga.
+        // Dulu: PR_<nama>_Pert_<week>_<id>.jpg → 2 PR mapel beda di minggu yang sama
+        // menghasilkan nama file SAMA → upsert menimpa file → foto_url kedua PR jadi
+        // sama (foto A ke-override foto B). Sekarang per (mapel, minggu, siswa).
         const safeName = student_name ? student_name.replace(/[^a-zA-Z0-9]/g, '_') : 'Siswa';
-        const fileName = `PR_${safeName}_Pert_${week}_${student_id}.jpg`;
+        const safeSubject = subject ? String(subject).replace(/[^a-zA-Z0-9]/g, '_') : 'mapel';
+        const fileName = `PR_${safeName}_${safeSubject}_Pert_${week}_${student_id}.jpg`;
 
         // Upload Buffer ke Supabase Storage
         const { error: uploadErr } = await supabase.storage.from('satpam_faces').upload(fileName, buffer, {
@@ -1071,6 +1074,14 @@ const uploadSatpamPhoto = async (req, res) => {
 
         const { data: publicUrlData } = supabase.storage.from('satpam_faces').getPublicUrl(fileName);
         const publicUrl = publicUrlData.publicUrl;
+
+        // [FIX] Hapus log lama utk PR yang sama dulu (cegah baris ganda menumpuk +
+        // bikin checkSatpamStatus.single() error 500), lalu masukkan yang baru.
+        await supabase.from('satpam_logs')
+            .delete()
+            .eq('student_id', student_id)
+            .eq('subject', subject)
+            .eq('week', parseInt(week));
 
         const { error: dbError } = await supabase.from('satpam_logs').insert([{
             student_id, subject, week: parseInt(week), photo_url: publicUrl
@@ -1173,23 +1184,19 @@ const checkSatpamStatus = async (req, res) => {
             return res.status(400).json({ status: "error", message: "Parameter tidak lengkap" });
         }
 
+        // [FIX] Jangan pakai .single() (error 500 kalau ada baris ganda). Pakai limit(1).
         const { data, error } = await supabase
             .from('satpam_logs')
             .select('id')
             .eq('student_id', student_id)
             .eq('subject', subject)
-            .eq('week', week)
-            .single();
+            .eq('week', parseInt(week))
+            .limit(1);
 
-        // Kalau errornya PGRST116 (No rows returned), berarti emang belum foto
-        if (error && error.code !== 'PGRST116') throw error;
+        if (error) throw error;
 
-        // Kalau data ada, isScanned = true. Kalau nggak ada, false.
-        if (data) {
-            res.status(200).json({ status: 'success', isScanned: true });
-        } else {
-            res.status(200).json({ status: 'success', isScanned: false });
-        }
+        const isScanned = Array.isArray(data) && data.length > 0;
+        res.status(200).json({ status: 'success', isScanned });
     } catch (error) {
         res.status(500).json({ status: 'error', message: error.message });
     }
