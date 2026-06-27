@@ -233,6 +233,7 @@ const submitAndGradeAnswers = async (req, res) => {
         // [2.6] Lacak potongan nilai telat biar bisa ditampilkan di modal hasil murid.
         let penaltyApplied = false;
         let penaltyDeducted = 0;
+        let penaltyPct = 0; // percent actual yang dipakai (bisa 10/15/20% dst)
 
         // 3. Terapkan Sihir Double Poin (JIKA DIA MEMINTA & JIKA DIA BENARAN PUNYA DI DB)
         if (is_double_score && studentInfo && studentInfo.item_double_score > 0) {
@@ -281,11 +282,13 @@ const submitAndGradeAnswers = async (req, res) => {
                     }
                     // Denda telat HANYA jika guru memilih "potong nilai" saat menyetujui
                     if (extRecord.penalty) {
+                        // Gunakan penalty_percent dari extRecord (10/15/20% dst), fallback 10%
+                        penaltyPct = typeof extRecord.penalty_percent === 'number' ? extRecord.penalty_percent : 10;
                         const beforePenalty = finalScore;
-                        finalScore = Math.floor(finalScore * 0.9);
+                        finalScore = Math.floor(finalScore * (1 - penaltyPct / 100));
                         penaltyApplied = true;
                         penaltyDeducted = beforePenalty - finalScore;
-                        notesArr.push("⚠️ Denda Terlambat (Dispensasi): Nilai dipotong 10%");
+                        notesArr.push(`⚠️ Denda Terlambat (Dispensasi): Nilai dipotong ${penaltyPct}%`);
                     }
                 }
             }
@@ -447,7 +450,7 @@ const submitAndGradeAnswers = async (req, res) => {
                 final_score: finalScore,
                 penalty_applied: penaltyApplied,
                 penalty_deducted: penaltyDeducted,
-                penalty_percent: penaltyApplied ? 10 : 0,
+                penalty_percent: penaltyPct,
                 notes: notesArr
             }
         });
@@ -843,14 +846,7 @@ const requestExtension = async (req, res) => {
 
         const existing = prevRows && prevRows[0];
 
-        if (existing) {
-            // Kalau sudah pernah DISETUJUI → tidak boleh minta lagi (kesempatan terpakai).
-            if (existing.status === 'granted') {
-                return res.status(409).json({
-                    status: "error", code: 'ALREADY_GRANTED',
-                    message: "Kamu sudah pernah dapat izin perpanjangan untuk tugas ini. Kesempatan tidak bisa dipakai dua kali."
-                });
-            }
+        if (existing && existing.status === 'pending') {
             // Masih pending → cukup perbarui alasan/kind (bukan dianggap permohonan baru).
             await supabase
                 .from('pr_extension_requests')
@@ -858,6 +854,8 @@ const requestExtension = async (req, res) => {
                 .eq('id', existing.id);
             return res.status(200).json({ status: "success", message: "Permintaan diperbarui." });
         }
+        // Kalau sudah pernah granted atau tidak ada → buat permohonan baru.
+        // Siswa boleh minta perpanjangan lagi; potongan nilai bertambah setiap kali (dihitung saat guru approve).
 
         const { error } = await supabase.from('pr_extension_requests').insert([{
             student_id,
@@ -963,7 +961,29 @@ const getExtensionRequests = async (req, res) => {
             .order('created_at', { ascending: false });
 
         if (error) throw error;
-        res.status(200).json({ status: "success", data: data || [] });
+
+        // Tambahkan grant_count per siswa per PR (untuk indikator warna di UI guru)
+        const rows = data || [];
+        const uniqueKeys = [...new Set(rows.map(r => `${r.student_id}|${r.subject}|${r.week}`))];
+        const grantCountMap = {};
+        await Promise.all(uniqueKeys.map(async key => {
+            const [sid, subj, wk] = key.split('|');
+            const { count } = await supabase
+                .from('pr_extension_requests')
+                .select('*', { count: 'exact', head: true })
+                .eq('student_id', sid)
+                .eq('subject', subj)
+                .eq('week', parseInt(wk))
+                .eq('status', 'granted');
+            grantCountMap[key] = count || 0;
+        }));
+        const dataWithCounts = rows.map(r => ({
+            ...r,
+            grant_count: grantCountMap[`${r.student_id}|${r.subject}|${r.week}`] || 0,
+            next_penalty_percent: 10 + ((grantCountMap[`${r.student_id}|${r.subject}|${r.week}`] || 0) * 5)
+        }));
+
+        res.status(200).json({ status: "success", data: dataWithCounts });
     } catch (error) {
         res.status(500).json({ status: "error", message: error.message });
     }
@@ -992,6 +1012,17 @@ const respondExtension = async (req, res) => {
 
         const { subject, week, student_id } = reqData;
 
+        // Hitung berapa kali siswa sudah pernah di-grant untuk PR ini
+        // penalty_percent: 10% pertama, +5% setiap pemberian berikutnya (15%, 20%, dst)
+        const { count: grantCount } = await supabase
+            .from('pr_extension_requests')
+            .select('*', { count: 'exact', head: true })
+            .eq('student_id', student_id)
+            .eq('subject', subject)
+            .eq('week', week)
+            .eq('status', 'granted');
+        const penaltyPercent = 10 + ((grantCount || 0) * 5);
+
         // Ambil dispensasi yang sudah ada (kalau baris pr_locks-nya ada)
         const { data: pr } = await supabase
             .from('pr_locks')
@@ -1004,9 +1035,9 @@ const respondExtension = async (req, res) => {
         try { while (typeof extended === 'string') extended = JSON.parse(extended); } catch (e) {}
         if (!Array.isArray(extended)) extended = [];
 
-        // Hapus dispensasi lama anak ini, lalu masukkan yang baru (+flag penalty)
+        // Hapus dispensasi lama anak ini, lalu masukkan yang baru (+flag penalty + persen denda)
         extended = extended.filter(ext => (typeof ext === 'object' ? ext.student_id : ext) !== student_id);
-        extended.push({ student_id, until: extension_until, penalty: !!with_penalty });
+        extended.push({ student_id, until: extension_until, penalty: !!with_penalty, penalty_percent: with_penalty ? penaltyPercent : 0 });
 
         // upsert: buat baris pr_locks kalau belum ada; deadline_at tidak ikut diubah
         await supabase
