@@ -17,15 +17,29 @@ if (PUB && PRIV) {
 const getPublicKey = () => PUB || null;
 
 // Kirim push ke semua device milik 1 murid. Hapus subscription yang sudah mati (410/404).
+// Body otomatis dipersonalisasi "Halo <nama depan>! ..." (penting kalau 1 HP dipakai banyak murid).
 async function sendToStudent(student_id, payload) {
     if (!configured) return;
+
+    // Ambil nama depan utk sapaan.
+    let firstName = '';
+    try {
+        const { data: s } = await supabase.from('students').select('name').eq('id', student_id).single();
+        if (s && s.name) firstName = String(s.name).trim().split(/\s+/)[0];
+    } catch (e) { /* abaikan, kirim tanpa nama */ }
+
+    const personalized = { ...payload };
+    if (firstName && personalized.body && !/^halo/i.test(personalized.body)) {
+        personalized.body = `Halo ${firstName}! ${personalized.body}`;
+    }
+
     const { data: subs, error } = await supabase
         .from('push_subscriptions')
         .select('id, subscription')
         .eq('student_id', student_id);
     if (error) { console.error('Push fetch subs error:', error.message); return; }
 
-    const body = JSON.stringify(payload);
+    const body = JSON.stringify(personalized);
     await Promise.all((subs || []).map(async (row) => {
         try {
             const sub = typeof row.subscription === 'string' ? JSON.parse(row.subscription) : row.subscription;

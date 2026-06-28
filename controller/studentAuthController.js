@@ -433,7 +433,7 @@ const savePushSubscription = async (req, res) => {
 
         const { error } = await supabase
             .from('push_subscriptions')
-            .upsert({ student_id, endpoint: sub.endpoint, subscription: sub }, { onConflict: 'endpoint' });
+            .upsert({ student_id, endpoint: sub.endpoint, subscription: sub }, { onConflict: 'student_id,endpoint' });
         if (error) throw error;
         return res.status(200).json({ status: 'success' });
     } catch (err) {
