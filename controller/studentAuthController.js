@@ -1,0 +1,330 @@
+const supabase = require('../config/supabaseClient');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+
+// POST /api/student/login  (publik)
+// username = NAMA DEPAN (kata pertama) huruf kecil; password = namadepan + "123" huruf kecil.
+// Contoh DB "Ica" -> login "ica" / "ica123". DB "Budi Santoso" -> "budi" / "budi123".
+const firstName = (n) => String(n || '').trim().split(/\s+/)[0].toLowerCase();
+
+const login = async (req, res) => {
+    try {
+        let { username, password } = req.body;
+        if (!username || !password) {
+            return res.status(400).json({ status: 'error', message: 'Username dan password wajib diisi' });
+        }
+        username = String(username).trim().toLowerCase();
+        password = String(password).trim();
+
+        // ponytail: ambil semua murid lalu cocokkan nama depan; jumlah murid se-TPA kecil.
+        const { data: students, error } = await supabase
+            .from('students')
+            .select('id, name, password');
+        if (error) throw error;
+
+        const candidates = (students || []).filter(s => firstName(s.name) === username);
+        if (!candidates.length) {
+            return res.status(401).json({ status: 'error', message: 'Username atau password salah' });
+        }
+
+        let student = null;
+        for (const s of candidates) {
+            const expected = firstName(s.name) + '123';          // skema deterministik
+            if (password.toLowerCase() === expected) { student = s; break; }
+            // Fallback: password custom di DB (bcrypt $2.. atau plaintext).
+            if (s.password) {
+                const m = s.password.startsWith('$2')
+                    ? await bcrypt.compare(password, s.password)
+                    : password === s.password;
+                if (m) { student = s; break; }
+            }
+        }
+
+        if (!student) {
+            return res.status(401).json({ status: 'error', message: 'Username atau password salah' });
+        }
+
+        const token = jwt.sign(
+            { student_id: student.id, role: 'student', name: student.name },
+            process.env.JWT_SECRET,
+            { expiresIn: '30d' }
+        );
+
+        return res.status(200).json({
+            status: 'success',
+            message: 'Login berhasil',
+            data: { student_id: student.id, name: student.name, token }
+        });
+    } catch (err) {
+        console.error('Student login error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// POST /api/student/reports  (token murid)
+// Tolak jika murid masih punya pengaduan 'open'.
+const submitReport = async (req, res) => {
+    try {
+        const student_id = req.user.student_id;
+        if (!student_id) return res.status(403).json({ status: 'error', message: 'Hanya untuk murid' });
+
+        const { category, message } = req.body;
+        if (!message || !message.trim()) {
+            return res.status(400).json({ status: 'error', message: 'Pesan tidak boleh kosong' });
+        }
+
+        const { data: open, error: openErr } = await supabase
+            .from('student_reports')
+            .select('id')
+            .eq('student_id', student_id)
+            .eq('status', 'open')
+            .limit(1);
+        if (openErr) throw openErr;
+        if (open && open.length > 0) {
+            return res.status(409).json({ status: 'error', message: 'Masih ada pengaduan yang belum ditangani guru.' });
+        }
+
+        const { data, error } = await supabase
+            .from('student_reports')
+            .insert([{ student_id, category: category || null, message: message.trim() }])
+            .select()
+            .single();
+        if (error) throw error;
+
+        return res.status(201).json({ status: 'success', data });
+    } catch (err) {
+        console.error('Submit report error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// GET /api/student/reports/mine  (token murid) — riwayat + status lock
+const getMyReports = async (req, res) => {
+    try {
+        const student_id = req.user.student_id;
+        if (!student_id) return res.status(403).json({ status: 'error', message: 'Hanya untuk murid' });
+
+        const { data, error } = await supabase
+            .from('student_reports')
+            .select('*')
+            .eq('student_id', student_id)
+            .order('created_at', { ascending: true });
+        if (error) throw error;
+
+        const locked = (data || []).some(r => r.status === 'open');
+        return res.status(200).json({ status: 'success', data: data || [], locked });
+    } catch (err) {
+        console.error('Get my reports error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// GET /api/student/reports  (token guru) — daftar pengaduan murid bimbingannya
+const getReportsForTeacher = async (req, res) => {
+    try {
+        const teacher = req.user.username;
+        if (!teacher) return res.status(403).json({ status: 'error', message: 'Hanya untuk guru' });
+
+        const { data, error } = await supabase
+            .from('student_reports')
+            .select('*, students!inner(name, grade, created_by)')
+            .eq('students.created_by', teacher)
+            .order('created_at', { ascending: false });
+        if (error) throw error;
+
+        return res.status(200).json({ status: 'success', data: data || [] });
+    } catch (err) {
+        console.error('Get teacher reports error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// PATCH /api/student/reports/:id/resolve  (token guru)
+const resolveReport = async (req, res) => {
+    try {
+        const teacher = req.user.username;
+        if (!teacher) return res.status(403).json({ status: 'error', message: 'Hanya untuk guru' });
+
+        const { id } = req.params;
+        const { data, error } = await supabase
+            .from('student_reports')
+            .update({ status: 'resolved', resolved_at: new Date().toISOString() })
+            .eq('id', id)
+            .select()
+            .single();
+        if (error) throw error;
+        if (!data) return res.status(404).json({ status: 'error', message: 'Pengaduan tidak ditemukan' });
+
+        return res.status(200).json({ status: 'success', data });
+    } catch (err) {
+        console.error('Resolve report error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// GET /api/student/public/students  (PUBLIK) — daftar nama utk pencarian izin
+const getPublicStudents = async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('students')
+            .select('id, name, grade')
+            .order('name', { ascending: true });
+        if (error) throw error;
+        return res.status(200).json({ status: 'success', data: data || [] });
+    } catch (err) {
+        console.error('Public students error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// POST /api/student/public/izin  (PUBLIK) — siswa kirim izin + alasan tanpa login
+const submitPublicIzin = async (req, res) => {
+    try {
+        const { student_id, reason } = req.body;
+        if (!student_id || !reason) {
+            return res.status(400).json({ status: 'error', message: 'Nama dan alasan wajib diisi' });
+        }
+        // Pastikan student valid (cegah spam id ngawur).
+        const { data: std, error: sErr } = await supabase.from('students').select('id').eq('id', student_id).single();
+        if (sErr || !std) return res.status(404).json({ status: 'error', message: 'Siswa tidak ditemukan' });
+
+        const { data, error } = await supabase
+            .from('student_reports')
+            .insert([{ student_id, category: 'Izin', message: String(reason).trim(), status: 'open' }])
+            .select().single();
+        if (error) throw error;
+        return res.status(201).json({ status: 'success', data });
+    } catch (err) {
+        console.error('Public izin error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// GET /api/student/me  (token murid) — profil & dompet/inventory diri sendiri
+// (Endpoint /api/students/:id milik guru, di-scope created_by, jadi tak bisa dipakai murid.)
+const getMyProfile = async (req, res) => {
+    try {
+        const student_id = req.user.student_id;
+        if (!student_id) return res.status(403).json({ status: 'error', message: 'Hanya untuk murid' });
+        const { data, error } = await supabase
+            .from('students')
+            .select('id, name, grade, poin, item_double_score, item_extra_life')
+            .eq('id', student_id)
+            .single();
+        if (error) throw error;
+        return res.status(200).json({ status: 'success', data });
+    } catch (err) {
+        console.error('Get my profile error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// GET /api/student/tasks  (token murid)
+// PR/tugas = pr_locks(is_locked=true). Selesai = ada di onboarding_results.
+// Balikin yang BELUM dikerjakan + flag telat (lewat deadline & tanpa dispensasi aktif).
+const getMyTasks = async (req, res) => {
+    try {
+        const student_id = req.user.student_id;
+        if (!student_id) return res.status(403).json({ status: 'error', message: 'Hanya untuk murid' });
+
+        const [{ data: locks, error: lockErr }, { data: done, error: doneErr }, { data: reqs, error: reqErr }] = await Promise.all([
+            supabase.from('pr_locks').select('subject, week, deadline_at, extended_students').eq('is_locked', true),
+            supabase.from('onboarding_results').select('subject, week').eq('student_id', student_id),
+            supabase.from('pr_extension_requests').select('subject, week, status').eq('student_id', student_id),
+        ]);
+        if (lockErr) throw lockErr;
+        if (doneErr) throw doneErr;
+        if (reqErr) throw reqErr;
+
+        const doneSet = new Set((done || []).map(d => `${d.subject}|${d.week}`));
+        // Status izin per PR: 'granted' menang atas 'pending'. Dipakai utk menyembunyikan
+        // kartu di menu "minta izin" kalau murid sudah pernah minta untuk PR itu.
+        const izinMap = {};
+        (reqs || []).forEach(r => {
+            const k = `${r.subject}|${r.week}`;
+            if (r.status === 'granted' || !izinMap[k]) izinMap[k] = r.status;
+        });
+        const now = new Date();
+
+        const pending = (locks || [])
+            .filter(l => !doneSet.has(`${l.subject}|${l.week}`))
+            .map(l => {
+                // Cari dispensasi murid ini (extended_students bisa jsonb string/array).
+                let ext = l.extended_students;
+                try { while (typeof ext === 'string') ext = JSON.parse(ext); } catch { ext = []; }
+                if (!Array.isArray(ext)) ext = [];
+                const mine = ext.find(e => (typeof e === 'object' ? e.student_id : e) === student_id);
+                const extUntil = mine && mine.until ? new Date(mine.until) : null;
+
+                let late = false;
+                if (l.deadline_at) {
+                    const dl = new Date(l.deadline_at);
+                    late = extUntil ? now > extUntil : now > dl;
+                }
+                return {
+                    subject: l.subject, week: l.week, deadline_at: l.deadline_at, late,
+                    has_extension: !!mine,
+                    izin_status: izinMap[`${l.subject}|${l.week}`] || 'none', // none | pending | granted
+                };
+            })
+            .sort((a, b) => (a.subject).localeCompare(b.subject) || a.week - b.week);
+
+        return res.status(200).json({ status: 'success', data: pending });
+    } catch (err) {
+        console.error('Get tasks error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// GET /api/student/notifications  (token murid)
+// Notif izin yang sudah DISETUJUI guru: sampai kapan, ada potongan nilai/tidak, sudah dikerjakan/belum.
+const getMyNotifications = async (req, res) => {
+    try {
+        const student_id = req.user.student_id;
+        if (!student_id) return res.status(403).json({ status: 'error', message: 'Hanya untuk murid' });
+
+        const [{ data: grants, error: gErr }, { data: locks, error: lErr }, { data: done, error: dErr }] = await Promise.all([
+            supabase.from('pr_extension_requests')
+                .select('subject, week, extension_until, with_penalty, responded_at')
+                .eq('student_id', student_id).eq('status', 'granted')
+                .order('responded_at', { ascending: false }),
+            supabase.from('pr_locks').select('subject, week, extended_students'),
+            supabase.from('onboarding_results').select('subject, week').eq('student_id', student_id),
+        ]);
+        if (gErr) throw gErr; if (lErr) throw lErr; if (dErr) throw dErr;
+
+        const doneSet = new Set((done || []).map(d => `${d.subject}|${d.week}`));
+        // Map persen potongan + batas waktu dari pr_locks.extended_students (sumber otoritatif).
+        const lockMap = {};
+        (locks || []).forEach(l => {
+            let ext = l.extended_students;
+            try { while (typeof ext === 'string') ext = JSON.parse(ext); } catch { ext = []; }
+            if (!Array.isArray(ext)) ext = [];
+            const mine = ext.find(e => (typeof e === 'object' ? e.student_id : e) === student_id);
+            if (mine) lockMap[`${l.subject}|${l.week}`] = { until: mine.until, penalty_percent: mine.penalty_percent || 0 };
+        });
+
+        const now = new Date();
+        const data = (grants || []).map(g => {
+            const k = `${g.subject}|${g.week}`;
+            const lm = lockMap[k] || {};
+            const until = g.extension_until || lm.until || null;
+            const expired = until ? now > new Date(until) : false;
+            return {
+                subject: g.subject, week: g.week, until,
+                with_penalty: !!g.with_penalty,
+                penalty_percent: lm.penalty_percent || 0,
+                done: doneSet.has(k),
+                expired,
+                responded_at: g.responded_at,
+            };
+        });
+
+        return res.status(200).json({ status: 'success', data });
+    } catch (err) {
+        console.error('Get notifications error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+module.exports = { login, submitReport, getMyReports, getReportsForTeacher, resolveReport, getMyTasks, getMyNotifications, getMyProfile, getPublicStudents, submitPublicIzin };
