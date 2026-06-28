@@ -805,6 +805,13 @@ const grantExtension = async (req, res) => {
         extended.push({ student_id, until: extension_until, penalty: !!req.body.with_penalty });
 
         await supabase.from('pr_locks').update({ extended_students: extended }).eq('subject', subject).eq('week', week);
+        try {
+            await require('../service/pushService').sendToStudent(student_id, {
+                title: 'Izin disetujui ✅',
+                body: `Kak Aziz memberi izin untuk ${subject} Pertemuan ${week}. Kamu sudah bisa mengerjakan!`,
+                url: '/sistem?from=push',
+            });
+        } catch (e) { console.error('Push grant error:', e.message); }
         res.status(200).json({ status: 'success', message: 'Dispensasi diberikan!' });
     } catch (error) {
         res.status(500).json({ status: 'error', message: error.message });
@@ -1049,6 +1056,15 @@ const respondExtension = async (req, res) => {
             .from('pr_extension_requests')
             .update({ status: 'granted', with_penalty: !!with_penalty, extension_until, responded_at: new Date().toISOString() })
             .eq('id', request_id);
+
+        // Push notif ke murid: izin disetujui → sudah boleh mengerjakan.
+        try {
+            await require('../service/pushService').sendToStudent(student_id, {
+                title: 'Izin disetujui ✅',
+                body: `Kak Aziz menyetujui izinmu untuk ${subject} Pertemuan ${week}. Kamu sudah bisa mengerjakan!`,
+                url: '/sistem?from=push',
+            });
+        } catch (e) { console.error('Push grant error:', e.message); }
 
         res.status(200).json({ status: "success", message: "Dispensasi diberikan!" });
     } catch (error) {

@@ -1,6 +1,7 @@
 const supabase = require('../config/supabaseClient');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const pushService = require('../service/pushService');
 
 // POST /api/student/login  (publik)
 // username = NAMA DEPAN (kata pertama) huruf kecil; password = namadepan + "123" huruf kecil.
@@ -188,6 +189,19 @@ const submitPublicIzin = async (req, res) => {
         const { data: std, error: sErr } = await supabase.from('students').select('id').eq('id', student_id).single();
         if (sErr || !std) return res.status(404).json({ status: 'error', message: 'Siswa tidak ditemukan' });
 
+        // Maks 1 izin per hari. Cek apakah sudah ada izin sejak awal hari ini.
+        const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+        const { data: todayIzin } = await supabase
+            .from('student_reports')
+            .select('id')
+            .eq('student_id', student_id)
+            .eq('category', 'Izin')
+            .gte('created_at', startOfDay.toISOString())
+            .limit(1);
+        if (todayIzin && todayIzin.length) {
+            return res.status(409).json({ status: 'error', message: 'Kamu sudah mengajukan izin hari ini. Coba lagi besok ya.' });
+        }
+
         const { data, error } = await supabase
             .from('student_reports')
             .insert([{ student_id, category: 'Izin', message: String(reason).trim(), status: 'open' }])
@@ -196,6 +210,81 @@ const submitPublicIzin = async (req, res) => {
         return res.status(201).json({ status: 'success', data });
     } catch (err) {
         console.error('Public izin error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// GET /api/student/izin/pending  (token guru) — daftar izin harian yang belum diputuskan
+const getPendingIzin = async (req, res) => {
+    try {
+        const teacher = req.user.username;
+        if (!teacher) return res.status(403).json({ status: 'error', message: 'Hanya untuk guru' });
+        const { data, error } = await supabase
+            .from('student_reports')
+            .select('*, students!inner(name, grade, created_by)')
+            .eq('category', 'Izin')
+            .eq('status', 'open')
+            .eq('students.created_by', teacher)
+            .order('created_at', { ascending: false });
+        if (error) throw error;
+        return res.status(200).json({ status: 'success', data: data || [] });
+    } catch (err) {
+        console.error('Pending izin error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// PATCH /api/student/izin/:id/decide  (token guru) — Terima (izin) / Tolak (alpa)
+// → tulis ke attendances hari ini + update status + push ke murid.
+const decideIzin = async (req, res) => {
+    try {
+        const teacher = req.user.username;
+        if (!teacher) return res.status(403).json({ status: 'error', message: 'Hanya untuk guru' });
+        const { id } = req.params;
+        const decision = req.body && req.body.decision; // 'accept' | 'reject'
+        if (!['accept', 'reject'].includes(decision)) {
+            return res.status(400).json({ status: 'error', message: 'Keputusan tidak valid' });
+        }
+
+        // Ambil izin + pastikan murid milik guru ini.
+        const { data: rep, error: repErr } = await supabase
+            .from('student_reports')
+            .select('id, student_id, message, status, students!inner(name, created_by)')
+            .eq('id', id).single();
+        if (repErr || !rep) return res.status(404).json({ status: 'error', message: 'Izin tidak ditemukan' });
+        if (rep.students.created_by !== teacher) return res.status(403).json({ status: 'error', message: 'Bukan murid Anda' });
+
+        // Tulis ke kehadiran hari ini (Asia/Jakarta), merge ke baris (date, created_by).
+        const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+        const { data: attRows } = await supabase
+            .from('attendances').select('id, subject, present_students')
+            .eq('date', today).eq('created_by', teacher).limit(1);
+        const att = attRows && attRows[0];
+        const present = (att && att.present_students) || {};
+        present[rep.student_id] = decision === 'accept'
+            ? { status: 'izin:lainnya', reason: rep.message || 'Izin' }
+            : { status: 'alpa', reason: 'Izin ditolak' };
+        const { error: upErr } = await supabase
+            .from('attendances')
+            .upsert({ date: today, subject: (att && att.subject) || 'Kehadiran Harian', present_students: present, created_by: teacher }, { onConflict: 'date, created_by' });
+        if (upErr) throw upErr;
+
+        // Update status izin.
+        await supabase.from('student_reports')
+            .update({ status: decision === 'accept' ? 'accepted' : 'rejected', resolved_at: new Date().toISOString() })
+            .eq('id', id);
+
+        // Push ke murid.
+        try {
+            const payload = decision === 'accept'
+                ? { title: 'Izin diterima ✅', body: 'Izinmu hari ini diterima Kak Aziz.', url: '/chats?from=push' }
+                : { title: 'Izin ditolak ❌', body: 'Izinmu hari ini ditolak — kamu tercatat alpha.', url: '/chats?from=push' };
+            await pushService.sendToStudent(rep.student_id, payload);
+        } catch (e) { console.error('Push izin decide error:', e.message); }
+
+        return res.status(200).json({ status: 'success' });
+    } catch (err) {
+        console.error('Decide izin error:', err.message);
         return res.status(500).json({ status: 'error', message: err.message });
     }
 };
@@ -327,4 +416,30 @@ const getMyNotifications = async (req, res) => {
     }
 };
 
-module.exports = { login, submitReport, getMyReports, getReportsForTeacher, resolveReport, getMyTasks, getMyNotifications, getMyProfile, getPublicStudents, submitPublicIzin };
+// GET /api/student/push/key  (publik) — VAPID public key utk subscribe
+const getPushKey = (req, res) => {
+    const key = pushService.getPublicKey();
+    if (!key) return res.status(503).json({ status: 'error', message: 'Push belum dikonfigurasi' });
+    return res.status(200).json({ status: 'success', data: { key } });
+};
+
+// POST /api/student/push/subscribe  (token murid) — simpan PushSubscription device
+const savePushSubscription = async (req, res) => {
+    try {
+        const student_id = req.user.student_id;
+        if (!student_id) return res.status(403).json({ status: 'error', message: 'Hanya untuk murid' });
+        const sub = req.body && req.body.subscription ? req.body.subscription : req.body;
+        if (!sub || !sub.endpoint) return res.status(400).json({ status: 'error', message: 'Subscription tidak valid' });
+
+        const { error } = await supabase
+            .from('push_subscriptions')
+            .upsert({ student_id, endpoint: sub.endpoint, subscription: sub }, { onConflict: 'endpoint' });
+        if (error) throw error;
+        return res.status(200).json({ status: 'success' });
+    } catch (err) {
+        console.error('Save push sub error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+module.exports = { login, submitReport, getMyReports, getReportsForTeacher, resolveReport, getMyTasks, getMyNotifications, getMyProfile, getPublicStudents, submitPublicIzin, getPushKey, savePushSubscription, getPendingIzin, decideIzin };
