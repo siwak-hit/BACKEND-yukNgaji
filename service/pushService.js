@@ -54,4 +54,14 @@ async function sendToStudent(student_id, payload) {
     }));
 }
 
-module.exports = { getPublicKey, sendToStudent };
+// Kirim ke semua murid milik 1 guru (created_by). Dipakai utk "tugas baru".
+// ponytail: N+1 query nama (via sendToStudent) — jumlah murid kecil, cukup.
+async function sendToAllStudents(teacherUsername, payload) {
+    if (!configured) return;
+    const { data: students, error } = await supabase
+        .from('students').select('id').eq('created_by', teacherUsername);
+    if (error) { console.error('Push all fetch students error:', error.message); return; }
+    await Promise.all((students || []).map(s => sendToStudent(s.id, payload).catch(() => {})));
+}
+
+module.exports = { getPublicKey, sendToStudent, sendToAllStudents };

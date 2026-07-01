@@ -289,6 +289,58 @@ const decideIzin = async (req, res) => {
     }
 };
 
+// GET /api/student/push/overdue-scan  (dipanggil cron) — push "tugas lewat deadline".
+// Dilindungi CRON_SECRET (header Authorization: Bearer <secret> atau ?secret=). Dedup via overdue_notifs.
+const overdueScan = async (req, res) => {
+    try {
+        const secret = process.env.CRON_SECRET;
+        const provided = (req.headers.authorization || '').replace('Bearer ', '') || req.query.secret;
+        if (secret && provided !== secret) return res.status(401).json({ status: 'error', message: 'Unauthorized' });
+
+        const now = new Date();
+        const [{ data: locks }, { data: students }, { data: done }, { data: logged }] = await Promise.all([
+            supabase.from('pr_locks').select('subject, week, deadline_at, extended_students').eq('is_locked', true).not('deadline_at', 'is', null),
+            supabase.from('students').select('id'),
+            supabase.from('onboarding_results').select('student_id, subject, week'),
+            supabase.from('overdue_notifs').select('student_id, subject, week'),
+        ]);
+
+        const overdue = (locks || []).filter(l => new Date(l.deadline_at) < now);
+        const doneSet = new Set((done || []).map(d => `${d.student_id}|${d.subject}|${d.week}`));
+        const loggedSet = new Set((logged || []).map(d => `${d.student_id}|${d.subject}|${d.week}`));
+        const pushService = require('../service/pushService');
+
+        const subjName = (s) => ({ tajwid: 'Tajwid', fiqih: 'Fiqih', tauhid: 'Tauhid' }[s] || s);
+        let pushed = 0;
+
+        for (const lock of overdue) {
+            let ext = lock.extended_students;
+            try { while (typeof ext === 'string') ext = JSON.parse(ext); } catch { ext = []; }
+            if (!Array.isArray(ext)) ext = [];
+
+            for (const s of (students || [])) {
+                const key = `${s.id}|${lock.subject}|${lock.week}`;
+                if (doneSet.has(key) || loggedSet.has(key)) continue;
+                // Punya dispensasi aktif (until > now) → belum dianggap lewat.
+                const mine = ext.find(e => (typeof e === 'object' ? e.student_id : e) === s.id);
+                if (mine && mine.until && new Date(mine.until) > now) continue;
+
+                await pushService.sendToStudent(s.id, {
+                    title: 'Tugas lewat batas ⏰',
+                    body: `Tugas ${subjName(lock.subject)} Pertemuan ${lock.week} sudah melebihi batas pengerjaan. Minta izin ke Kak Aziz untuk melanjutkan ya.`,
+                    url: `/sistem?from=push&overdue=${lock.subject}:${lock.week}`,
+                });
+                await supabase.from('overdue_notifs').insert({ student_id: s.id, subject: lock.subject, week: lock.week });
+                pushed++;
+            }
+        }
+        return res.status(200).json({ status: 'success', pushed });
+    } catch (err) {
+        console.error('Overdue scan error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
 // GET /api/student/me  (token murid) — profil & dompet/inventory diri sendiri
 // (Endpoint /api/students/:id milik guru, di-scope created_by, jadi tak bisa dipakai murid.)
 const getMyProfile = async (req, res) => {
@@ -442,4 +494,4 @@ const savePushSubscription = async (req, res) => {
     }
 };
 
-module.exports = { login, submitReport, getMyReports, getReportsForTeacher, resolveReport, getMyTasks, getMyNotifications, getMyProfile, getPublicStudents, submitPublicIzin, getPushKey, savePushSubscription, getPendingIzin, decideIzin };
+module.exports = { login, submitReport, getMyReports, getReportsForTeacher, resolveReport, getMyTasks, getMyNotifications, getMyProfile, getPublicStudents, submitPublicIzin, getPushKey, savePushSubscription, getPendingIzin, decideIzin, overdueScan };

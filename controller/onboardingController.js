@@ -785,6 +785,21 @@ const togglePRLock = async (req, res) => {
         const { error } = await supabase.from('pr_locks').upsert(payload, { onConflict: 'subject, week' });
 
         if (error) throw error;
+
+        // Push "tugas baru" ke semua murid saat PR dibuka + ada deadline.
+        // ponytail: bisa dobel kalau guru toggle berkali-kali; cukup utk sekarang.
+        try {
+            if (is_locked === true && deadline_at) {
+                const subjName = { tajwid: 'Tajwid', fiqih: 'Fiqih', tauhid: 'Tauhid' }[subject] || subject;
+                const dl = new Date(deadline_at).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+                await require('../service/pushService').sendToAllStudents(req.user.username, {
+                    title: 'Tugas baru 📘',
+                    body: `${subjName} Pertemuan ${week} sudah dibuka. Batas pengerjaan: ${dl}. Yuk kerjakan!`,
+                    url: `/sistem?from=push&do=${subject}:${week}`,
+                });
+            }
+        } catch (e) { console.error('Push tugas baru error:', e.message); }
+
         res.status(200).json({ status: 'success' });
     } catch (error) {
         res.status(500).json({ status: 'error', message: error.message });

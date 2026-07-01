@@ -8,6 +8,7 @@ router.post('/login', ctrl.login);
 router.get('/public/students', ctrl.getPublicStudents);   // cari nama
 router.post('/public/izin', ctrl.submitPublicIzin);       // kirim izin + alasan
 router.get('/push/key', ctrl.getPushKey);                 // VAPID public key
+router.get('/push/overdue-scan', ctrl.overdueScan);       // cron: push tugas lewat deadline
 
 // Butuh token (murid maupun guru; role dicek di controller)
 router.use(verifyToken);
