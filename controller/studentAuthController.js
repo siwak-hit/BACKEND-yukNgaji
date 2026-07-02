@@ -341,6 +341,27 @@ const overdueScan = async (req, res) => {
     }
 };
 
+// GET /api/student/public/izin-today  (PUBLIK) — cek apakah murid sudah izin hari ini
+const getIzinToday = async (req, res) => {
+    try {
+        const { student_id } = req.query;
+        if (!student_id) return res.status(400).json({ status: 'error', message: 'student_id wajib' });
+        const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+        const { data } = await supabase
+            .from('student_reports')
+            .select('message, created_at')
+            .eq('student_id', student_id)
+            .eq('category', 'Izin')
+            .gte('created_at', startOfDay.toISOString())
+            .order('created_at', { ascending: false })
+            .limit(1);
+        const row = data && data[0];
+        return res.status(200).json({ status: 'success', data: { izined: !!row, reason: row ? row.message : null } });
+    } catch (err) {
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
 // GET /api/student/me  (token murid) — profil & dompet/inventory diri sendiri
 // (Endpoint /api/students/:id milik guru, di-scope created_by, jadi tak bisa dipakai murid.)
 const getMyProfile = async (req, res) => {
@@ -494,4 +515,4 @@ const savePushSubscription = async (req, res) => {
     }
 };
 
-module.exports = { login, submitReport, getMyReports, getReportsForTeacher, resolveReport, getMyTasks, getMyNotifications, getMyProfile, getPublicStudents, submitPublicIzin, getPushKey, savePushSubscription, getPendingIzin, decideIzin, overdueScan };
+module.exports = { login, submitReport, getMyReports, getReportsForTeacher, resolveReport, getMyTasks, getMyNotifications, getMyProfile, getPublicStudents, submitPublicIzin, getPushKey, savePushSubscription, getPendingIzin, decideIzin, overdueScan, getIzinToday };
