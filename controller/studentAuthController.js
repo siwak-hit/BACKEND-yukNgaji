@@ -390,6 +390,25 @@ const getMyProfile = async (req, res) => {
     }
 };
 
+// POST /api/student/refund-coins  (token murid) — kembalikan koin (mis. beli waktu tapi keburu habis).
+// Dibatasi maks 100 biar aman.
+const refundCoins = async (req, res) => {
+    try {
+        const student_id = req.user.student_id;
+        if (!student_id) return res.status(403).json({ status: 'error', message: 'Hanya untuk murid' });
+        const amount = Math.min(Number(req.body?.amount) || 0, 100);
+        if (amount <= 0) return res.status(400).json({ status: 'error', message: 'Nominal tidak valid' });
+        const { data: s } = await supabase.from('students').select('poin').eq('id', student_id).single();
+        const newPoin = (Number(s?.poin) || 0) + amount;
+        const { error } = await supabase.from('students').update({ poin: newPoin }).eq('id', student_id);
+        if (error) throw error;
+        return res.status(200).json({ status: 'success', data: { poin: newPoin } });
+    } catch (err) {
+        console.error('Refund error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
 // GET /api/student/tasks  (token murid)
 // PR/tugas = pr_locks(is_locked=true). Selesai = ada di onboarding_results.
 // Balikin yang BELUM dikerjakan + flag telat (lewat deadline & tanpa dispensasi aktif).
@@ -524,4 +543,4 @@ const savePushSubscription = async (req, res) => {
     }
 };
 
-module.exports = { login, submitReport, getMyReports, getReportsForTeacher, resolveReport, getMyTasks, getMyNotifications, getMyProfile, getPublicStudents, submitPublicIzin, getPushKey, savePushSubscription, getPendingIzin, decideIzin, overdueScan, getIzinToday };
+module.exports = { login, submitReport, getMyReports, getReportsForTeacher, resolveReport, getMyTasks, getMyNotifications, getMyProfile, getPublicStudents, submitPublicIzin, getPushKey, savePushSubscription, getPendingIzin, decideIzin, overdueScan, getIzinToday, refundCoins };

@@ -271,7 +271,11 @@ const purchaseInstantEffect = async (req, res) => {
             .single();
 
         if (fetchError || !student) throw fetchError;
-        if (student.poin < cost) return res.status(400).json({ status: "error", message: "Koin tidak cukup!" });
+        // Tahan null/NaN biar koin tak korup. cost wajib angka > 0.
+        const poin = Number(student.poin) || 0;
+        const c = Number(cost) || 0;
+        if (c <= 0) return res.status(400).json({ status: "error", message: "Nominal tidak valid." });
+        if (poin < c) return res.status(400).json({ status: "error", message: `Koin tidak cukup! Butuh ${c}, koinmu ${poin}` });
 
         // [B] Bully hanya boleh SEKALI per korban sampai sistem bully-nya selesai.
         //     Cek dulu SEBELUM potong koin supaya pembeli tidak rugi koin kalau gagal.
@@ -289,7 +293,7 @@ const purchaseInstantEffect = async (req, res) => {
         }
 
         // 2. Potong Saldo
-        const newPoin = student.poin - cost;
+        const newPoin = poin - c;
         await supabase.from('students').update({ poin: newPoin }).eq('id', student_id);
 
         // 3. Eksekusi Bully & Catat Nama Pelaku

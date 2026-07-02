@@ -15,6 +15,7 @@ router.get('/push/overdue-scan', ctrl.overdueScan);       // cron: push tugas le
 router.use(verifyToken);
 router.get('/me', ctrl.getMyProfile);                     // murid: profil + koin/inventory
 router.post('/push/subscribe', ctrl.savePushSubscription);// daftar device utk push
+router.post('/refund-coins', ctrl.refundCoins);           // kembalikan koin (beli waktu keburu habis)
 router.get('/tasks', ctrl.getMyTasks);                    // murid: PR yang belum dikerjakan
 router.get('/notifications', ctrl.getMyNotifications);    // murid: notif izin disetujui
 router.post('/reports', ctrl.submitReport);              // murid kirim aduan
