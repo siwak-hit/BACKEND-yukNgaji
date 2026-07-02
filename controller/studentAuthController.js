@@ -260,9 +260,18 @@ const decideIzin = async (req, res) => {
             .from('attendances').select('id, subject, present_students')
             .eq('date', today).eq('created_by', teacher).limit(1);
         const att = attRows && attRows[0];
+        // Petakan alasan izin → status absensi (izin:sakit/pergi/haid/belajar/lainnya).
+        const mapIzin = (msg) => {
+            const m = String(msg || '').toLowerCase();
+            if (m.includes('sakit')) return 'izin:sakit';
+            if (m.includes('haid')) return 'izin:haid';
+            if (m.includes('belajar')) return 'izin:belajar';
+            if (m.includes('pergi')) return 'izin:pergi';
+            return 'izin:lainnya';
+        };
         const present = (att && att.present_students) || {};
         present[rep.student_id] = decision === 'accept'
-            ? { status: 'izin:lainnya', reason: rep.message || 'Izin' }
+            ? { status: mapIzin(rep.message), reason: rep.message || 'Izin' }
             : { status: 'alpa', reason: 'Izin ditolak' };
         const { error: upErr } = await supabase
             .from('attendances')
