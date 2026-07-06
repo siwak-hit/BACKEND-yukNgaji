@@ -21,6 +21,7 @@ const dailyChallengeRouter = require('./router/dailyChallengeRouter');
 const rewardRouter = require('./router/digitalRewardRouter');
 const feedbackRouter = require('./router/feedbackRouter');
 const studentAuthRouter = require('./router/studentAuthRouter');
+const tajwidRouter = require('./router/tajwidRouter');
 
 // 1. Konfigurasi CORS (Sangat penting agar Frontend di Vercel bisa akses)
 app.use(cors({
@@ -63,6 +64,7 @@ app.use('/api/daily-challenge', dailyChallengeRouter);
 app.use('/api/digital-rewards',rewardRouter);
 app.use('/api/feedbacks', feedbackRouter);
 app.use('/api/student', studentAuthRouter);
+app.use('/api/tajwid', tajwidRouter);
 
 // 4. Export untuk dibaca oleh platform Serverless Vercel
 module.exports = app;
