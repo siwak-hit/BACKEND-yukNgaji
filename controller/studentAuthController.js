@@ -417,18 +417,24 @@ const getMyTasks = async (req, res) => {
         const student_id = req.user.student_id;
         if (!student_id) return res.status(403).json({ status: 'error', message: 'Hanya untuk murid' });
 
-        const [{ data: locks, error: lockErr }, { data: done, error: doneErr }, { data: reqs, error: reqErr }] = await Promise.all([
-            supabase.from('pr_locks').select('subject, week, deadline_at, extended_students').eq('is_locked', true),
+        // Sumber daftar tugas = ADANYA soal (tabel questions). Begitu guru selesai bikin soal utk
+        // (subject, week), tugas langsung muncul ke murid — tanpa harus buka gembok dulu.
+        // pr_locks kini hanya dipakai utk info deadline + dispensasi (opsional per tugas).
+        const [{ data: qs, error: qErr }, { data: locks, error: lockErr }, { data: done, error: doneErr }, { data: reqs, error: reqErr }] = await Promise.all([
+            supabase.from('questions').select('subject, week'),
+            supabase.from('pr_locks').select('subject, week, deadline_at, extended_students'),
             supabase.from('onboarding_results').select('subject, week').eq('student_id', student_id),
             supabase.from('pr_extension_requests').select('subject, week, status').eq('student_id', student_id),
         ]);
+        if (qErr) throw qErr;
         if (lockErr) throw lockErr;
         if (doneErr) throw doneErr;
         if (reqErr) throw reqErr;
 
         const doneSet = new Set((done || []).map(d => `${d.subject}|${d.week}`));
-        // Status izin per PR: 'granted' menang atas 'pending'. Dipakai utk menyembunyikan
-        // kartu di menu "minta izin" kalau murid sudah pernah minta untuk PR itu.
+        const lockMap = {};
+        (locks || []).forEach(l => { lockMap[`${l.subject}|${l.week}`] = l; });
+        // Status izin per PR: 'granted' menang atas 'pending'.
         const izinMap = {};
         (reqs || []).forEach(r => {
             const k = `${r.subject}|${r.week}`;
@@ -436,28 +442,34 @@ const getMyTasks = async (req, res) => {
         });
         const now = new Date();
 
-        const pending = (locks || [])
-            .filter(l => !doneSet.has(`${l.subject}|${l.week}`))
-            .map(l => {
-                // Cari dispensasi murid ini (extended_students bisa jsonb string/array).
-                let ext = l.extended_students;
-                try { while (typeof ext === 'string') ext = JSON.parse(ext); } catch { ext = []; }
-                if (!Array.isArray(ext)) ext = [];
-                const mine = ext.find(e => (typeof e === 'object' ? e.student_id : e) === student_id);
-                const extUntil = mine && mine.until ? new Date(mine.until) : null;
+        // (subject, week) unik dari soal yang ADA, buang yang sudah dikerjakan.
+        // ponytail: dedup di JS (questions kolomnya cuma 2, distinct-nya ringan).
+        const seen = new Set();
+        const pending = [];
+        (qs || []).forEach(q => {
+            const key = `${q.subject}|${q.week}`;
+            if (seen.has(key) || doneSet.has(key)) return;
+            seen.add(key);
+            const l = lockMap[key] || {};
+            // Dispensasi murid ini (extended_students bisa jsonb string/array).
+            let ext = l.extended_students;
+            try { while (typeof ext === 'string') ext = JSON.parse(ext); } catch { ext = []; }
+            if (!Array.isArray(ext)) ext = [];
+            const mine = ext.find(e => (typeof e === 'object' ? e.student_id : e) === student_id);
+            const extUntil = mine && mine.until ? new Date(mine.until) : null;
 
-                let late = false;
-                if (l.deadline_at) {
-                    const dl = new Date(l.deadline_at);
-                    late = extUntil ? now > extUntil : now > dl;
-                }
-                return {
-                    subject: l.subject, week: l.week, deadline_at: l.deadline_at, late,
-                    has_extension: !!mine,
-                    izin_status: izinMap[`${l.subject}|${l.week}`] || 'none', // none | pending | granted
-                };
-            })
-            .sort((a, b) => (a.subject).localeCompare(b.subject) || a.week - b.week);
+            let late = false;
+            if (l.deadline_at) {
+                const dl = new Date(l.deadline_at);
+                late = extUntil ? now > extUntil : now > dl;
+            }
+            pending.push({
+                subject: q.subject, week: q.week, deadline_at: l.deadline_at || null, late,
+                has_extension: !!mine,
+                izin_status: izinMap[key] || 'none', // none | pending | granted
+            });
+        });
+        pending.sort((a, b) => (a.subject).localeCompare(b.subject) || a.week - b.week);
 
         return res.status(200).json({ status: 'success', data: pending });
     } catch (err) {
