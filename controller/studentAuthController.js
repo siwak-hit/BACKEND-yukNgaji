@@ -2,6 +2,7 @@ const supabase = require('../config/supabaseClient');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const pushService = require('../service/pushService');
+const { JUZ_AMMA } = require('./memorizationController');
 
 // POST /api/student/login  (publik)
 // username = NAMA DEPAN (kata pertama) huruf kecil; password = namadepan + "123" huruf kecil.
@@ -529,6 +530,79 @@ const getMyNotifications = async (req, res) => {
     }
 };
 
+// GET /api/student/my/memorization  (token murid) — hafalan diri sendiri (posisi terkini + riwayat)
+const getMyMemorization = async (req, res) => {
+    try {
+        const student_id = req.user.student_id;
+        if (!student_id) return res.status(403).json({ status: 'error', message: 'Hanya untuk murid' });
+        const [{ data: st, error: sErr }, { data: logs, error: lErr }] = await Promise.all([
+            supabase.from('students').select('name, current_surah_id, current_ayah').eq('id', student_id).single(),
+            supabase.from('memorization_logs').select('date, surah_name, start_ayah, end_ayah, added_ayahs')
+                .eq('student_id', student_id).order('date', { ascending: false }).limit(50),
+        ]);
+        if (sErr) throw sErr; if (lErr) throw lErr;
+        const surah = st?.current_surah_id ? JUZ_AMMA.find(s => s.id === st.current_surah_id) : null;
+        return res.status(200).json({ status: 'success', data: {
+            current: surah ? { surah_id: st.current_surah_id, surah_name: surah.name, ayah: st.current_ayah || 0, total_ayahs: surah.ayahs } : null,
+            logs: logs || [],
+        }});
+    } catch (err) {
+        console.error('Get my memorization error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// GET /api/student/my/gallery  (token murid) — foto satpam (bucket satpam_faces) milik sendiri
+const getMyGallery = async (req, res) => {
+    try {
+        const student_id = req.user.student_id;
+        if (!student_id) return res.status(403).json({ status: 'error', message: 'Hanya untuk murid' });
+        const { data, error } = await supabase.from('satpam_logs')
+            .select('photo_url, subject, week').eq('student_id', student_id);
+        if (error) throw error;
+        // Samakan bentuk output dgn yg dipakai frontend: {image_url, subject, week}
+        const rows = (data || []).filter(r => r.photo_url).map(r => ({ image_url: r.photo_url, subject: r.subject, week: r.week }));
+        return res.status(200).json({ status: 'success', data: rows });
+    } catch (err) {
+        console.error('Get my gallery error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// GET /api/student/my/grades  (token murid) — nilai tiap tugas (per mapel & pertemuan).
+// Semua tugas (subject,week) dari tabel questions ditampilkan; yg belum dikerjakan → score null.
+const getMyGrades = async (req, res) => {
+    try {
+        const student_id = req.user.student_id;
+        if (!student_id) return res.status(403).json({ status: 'error', message: 'Hanya untuk murid' });
+        const [{ data: qs, error: qErr }, { data: results, error: rErr }] = await Promise.all([
+            supabase.from('questions').select('subject, week'),
+            supabase.from('onboarding_results').select('subject, week, score').eq('student_id', student_id),
+        ]);
+        if (qErr) throw qErr; if (rErr) throw rErr;
+        // Map hasil: key "subject|week" → score (bisa 0). Pakai 'in' agar 0 ≠ belum dikerjakan.
+        const scoreMap = {};
+        (results || []).forEach(r => { scoreMap[`${r.subject}|${r.week}`] = r.score; });
+        const seen = new Set();
+        const rows = [];
+        (qs || []).forEach(q => {
+            const key = `${q.subject}|${q.week}`;
+            if (seen.has(key)) return; seen.add(key);
+            rows.push({ subject: q.subject, week: q.week, score: key in scoreMap ? scoreMap[key] : null });
+        });
+        // Hasil yg soalnya sudah tak ada lagi tetap dimasukkan biar nilainya tak hilang.
+        (results || []).forEach(r => {
+            const key = `${r.subject}|${r.week}`;
+            if (!seen.has(key)) { seen.add(key); rows.push({ subject: r.subject, week: r.week, score: r.score }); }
+        });
+        rows.sort((a, b) => String(a.subject).localeCompare(b.subject) || a.week - b.week);
+        return res.status(200).json({ status: 'success', data: rows });
+    } catch (err) {
+        console.error('Get my grades error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
 // GET /api/student/push/key  (publik) — VAPID public key utk subscribe
 const getPushKey = (req, res) => {
     const key = pushService.getPublicKey();
@@ -555,4 +629,4 @@ const savePushSubscription = async (req, res) => {
     }
 };
 
-module.exports = { login, submitReport, getMyReports, getReportsForTeacher, resolveReport, getMyTasks, getMyNotifications, getMyProfile, getPublicStudents, submitPublicIzin, getPushKey, savePushSubscription, getPendingIzin, decideIzin, overdueScan, getIzinToday, refundCoins };
+module.exports = { login, submitReport, getMyReports, getReportsForTeacher, resolveReport, getMyTasks, getMyNotifications, getMyProfile, getPublicStudents, submitPublicIzin, getPushKey, savePushSubscription, getPendingIzin, decideIzin, overdueScan, getIzinToday, refundCoins, getMyMemorization, getMyGallery, getMyGrades };

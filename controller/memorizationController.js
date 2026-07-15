@@ -183,4 +183,4 @@ const getMemorizationLogs = async (req, res) => {
 };
 
 // Ekspor semua module, termasuk logMurojaah
-module.exports = { logMemorization, logMurojaah, setCheckpoint, updateCheckpoint, resetCheckpoint, getMemorizationLogs };
+module.exports = { logMemorization, logMurojaah, setCheckpoint, updateCheckpoint, resetCheckpoint, getMemorizationLogs, JUZ_AMMA };

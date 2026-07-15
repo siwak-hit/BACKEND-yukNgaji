@@ -17,6 +17,9 @@ router.get('/me', ctrl.getMyProfile);                     // murid: profil + koi
 router.post('/push/subscribe', ctrl.savePushSubscription);// daftar device utk push
 router.post('/refund-coins', ctrl.refundCoins);           // kembalikan koin (beli waktu keburu habis)
 router.get('/tasks', ctrl.getMyTasks);                    // murid: PR yang belum dikerjakan
+router.get('/my/memorization', ctrl.getMyMemorization);   // murid: hafalan diri sendiri
+router.get('/my/gallery', ctrl.getMyGallery);             // murid: galeri foto diri sendiri
+router.get('/my/grades', ctrl.getMyGrades);               // murid: nilai tiap tugas
 router.get('/notifications', ctrl.getMyNotifications);    // murid: notif izin disetujui
 router.post('/reports', ctrl.submitReport);              // murid kirim aduan
 router.get('/reports/mine', ctrl.getMyReports);          // murid: riwayat + lock
