@@ -1087,6 +1087,107 @@ const respondExtension = async (req, res) => {
     }
 };
 
+// [GURU] Tolak permintaan perpanjangan: status → 'rejected' + push notif ke murid.
+const rejectExtension = async (req, res) => {
+    try {
+        const username = req.user.username;
+        const { request_id } = req.body;
+        if (!request_id) {
+            return res.status(400).json({ status: "error", message: "Data tidak lengkap." });
+        }
+
+        // Ambil request & pastikan milik guru ini
+        const { data: reqData, error: reqErr } = await supabase
+            .from('pr_extension_requests')
+            .select('id, student_id, subject, week, status')
+            .eq('id', request_id)
+            .eq('created_by', username)
+            .single();
+
+        if (reqErr || !reqData) {
+            return res.status(404).json({ status: "error", message: "Permintaan tidak ditemukan." });
+        }
+        if (reqData.status !== 'pending') {
+            return res.status(409).json({ status: "error", message: "Permintaan ini sudah ditangani." });
+        }
+
+        const { error: upErr } = await supabase
+            .from('pr_extension_requests')
+            .update({ status: 'rejected', responded_at: new Date().toISOString() })
+            .eq('id', request_id);
+        if (upErr) throw upErr;
+
+        // Push notif ke murid: izin ditolak.
+        try {
+            const subjName = { tajwid: 'Tajwid', fiqih: 'Fiqih', tauhid: 'Tauhid' }[reqData.subject] || reqData.subject;
+            await require('../service/pushService').sendToStudent(reqData.student_id, {
+                title: 'Perpanjangan ditolak ❌',
+                body: `Maaf, permintaan perpanjangan waktu untuk ${subjName} Pertemuan ${reqData.week} ditolak Kak Aziz. Hubungi beliau langsung ya.`,
+                url: '/sistem?from=push',
+            });
+        } catch (e) { console.error('Push reject error:', e.message); }
+
+        res.status(200).json({ status: "success", message: "Permintaan perpanjangan ditolak." });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+// [GURU] Ingatkan siswa yang BELUM mengerjakan PR (subject, week) via push notif.
+// Hanya terkirim ke murid guru ini yang punya push subscription & belum ada di onboarding_results.
+const remindPRStudents = async (req, res) => {
+    try {
+        const username = req.user.username;
+        const { subject, week, message } = req.body;
+        if (!subject || !week) {
+            return res.status(400).json({ status: "error", message: "Mapel dan pertemuan wajib diisi." });
+        }
+        const weekNum = parseInt(week);
+
+        const [{ data: students, error: sErr }, { data: done, error: dErr }, { data: subs, error: subErr }] = await Promise.all([
+            supabase.from('students').select('id, name').eq('created_by', username),
+            supabase.from('onboarding_results').select('student_id').eq('subject', subject).eq('week', weekNum),
+            supabase.from('push_subscriptions').select('student_id'),
+        ]);
+        if (sErr) throw sErr;
+        if (dErr) throw dErr;
+        if (subErr) throw subErr;
+
+        const doneSet = new Set((done || []).map(d => d.student_id));
+        const subSet = new Set((subs || []).map(s => s.student_id));
+        const targets = (students || []).filter(s => !doneSet.has(s.id) && subSet.has(s.id));
+        const notSubscribed = (students || []).filter(s => !doneSet.has(s.id) && !subSet.has(s.id)).length;
+
+        if (!targets.length) {
+            return res.status(200).json({
+                status: "success",
+                message: notSubscribed
+                    ? `Tidak ada yang bisa dikirimi notif. ${notSubscribed} siswa belum mengerjakan tapi belum mengaktifkan notifikasi.`
+                    : "Semua siswa sudah mengerjakan tugas ini. 🎉",
+                sent: 0, not_subscribed: notSubscribed,
+            });
+        }
+
+        const subjName = { tajwid: 'Tajwid', fiqih: 'Fiqih', tauhid: 'Tauhid' }[subject] || subject;
+        const defaultMessage = `Jangan lupa kerjakan tugas ${subjName} Pertemuan ${weekNum} ya. Ditunggu Kak Aziz! 💪`;
+        const pushService = require('../service/pushService');
+        const payload = {
+            title: `Pengingat Tugas ${subjName} 📚`,
+            body: (message && message.trim()) || defaultMessage,
+            url: `/sistem?from=push&do=${subject}:${weekNum}`,
+        };
+        await Promise.all(targets.map(t => pushService.sendToStudent(t.id, payload).catch(() => {})));
+
+        res.status(200).json({
+            status: "success",
+            message: `Pengingat terkirim ke ${targets.length} siswa yang belum mengerjakan.${notSubscribed ? ` (${notSubscribed} lainnya belum aktifkan notifikasi)` : ''}`,
+            sent: targets.length, not_subscribed: notSubscribed,
+        });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
 const getPRLocks = async (req, res) => {
     try {
         const { subject } = req.params;
@@ -1548,6 +1649,8 @@ module.exports = {
     getPRDraft,
     savePRDraft,
     respondExtension,
+    rejectExtension,
+    remindPRStudents,
     getPRLockDetail,
     checkSatpamStatus,
     transferRewardCoin,

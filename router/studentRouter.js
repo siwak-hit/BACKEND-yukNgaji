@@ -38,6 +38,9 @@ router.get('/:id/attendance', studentController.getStudentAttendance);
 
 router.patch('/:id/infaq-can', verifyToken, studentController.toggleInfaqCan);
 
+// Infaq Can Reminder
+router.post('/:id/remind-infaq', verifyToken, studentController.sendInfaqReminder);
+
 // Hafalan log
 router.post('/:id/memorization', verifyToken, logMemorization);
 
@@ -67,5 +70,6 @@ router.post('/:id/verify-pin', verifyToken, studentController.verifyStudentPin);
 router.put('/:id/attendance', verifyToken, studentController.updateStudentAttendanceStatus);
 
 router.post('/:id/murojaah', logMurojaah);
+// (Push subscription murid disimpan lewat /api/student/push/subscribe — lihat studentAuthRouter)
 
 module.exports = router;

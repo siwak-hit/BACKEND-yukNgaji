@@ -11,7 +11,7 @@ const getStudentsByTeacher = async (teacherUsername) => {
     const { data, error } = await supabase
         .from('students')
         // TAMBAHAN: shield_activated_at
-        .select('id, name, grade, poin, item_double_score, item_serang, item_perisai, item_extra_life, is_shield_active, shield_activated_at, current_surah_id, current_ayah, has_infaq_can')
+        .select('id, name, grade, poin, item_double_score, item_serang, item_perisai, item_extra_life, is_shield_active, shield_activated_at, current_surah_id, current_ayah, has_infaq_can, last_infaq_reminded_at')
         .eq('created_by', teacherUsername)
         .order('name', { ascending: true });
     if (error) throw error;
@@ -23,7 +23,7 @@ const getStudentById = async (id, teacherUsername) => {
     const { data, error } = await supabase
         .from('students')
         // TAMBAHAN: shield_activated_at
-        .select('id, name, grade, poin, has_claimed_bonus, item_double_score, item_serang, item_perisai, item_extra_life, is_shield_active, shield_activated_at, current_surah_id, current_ayah, has_infaq_can, last_can_received_at')
+        .select('id, name, grade, poin, has_claimed_bonus, item_double_score, item_serang, item_perisai, item_extra_life, is_shield_active, shield_activated_at, current_surah_id, current_ayah, has_infaq_can, last_can_received_at, last_infaq_reminded_at')
         .eq('id', id)
         .eq('created_by', teacherUsername)
         .single();
@@ -43,4 +43,15 @@ const deleteStudent = async (id, teacherUsername) => {
     return true;
 };
 
-module.exports = { createStudent, getStudentsByTeacher, getStudentById, updateStudent, deleteStudent };
+const updateInfaqReminderTime = async (studentId, timestamp) => {
+    const { data, error } = await supabase
+        .from('students')
+        .update({ last_infaq_reminded_at: timestamp })
+        .eq('id', studentId)
+        .select('id')
+        .single();
+    if (error) throw error;
+    return data;
+};
+
+module.exports = { createStudent, getStudentsByTeacher, getStudentById, updateStudent, deleteStudent, updateInfaqReminderTime };

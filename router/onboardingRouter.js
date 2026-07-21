@@ -51,6 +51,10 @@ router.get('/pr-extension-mine', onboardingController.getMyExtensionRequest);
 router.get('/pr-draft', onboardingController.getPRDraft);
 router.post('/pr-draft', onboardingController.savePRDraft);
 router.post('/pr-extension-respond', onboardingController.respondExtension);
+router.post('/pr-extension-reject', onboardingController.rejectExtension);
+
+// Push pengingat "kerjakan tugas" ke murid yang belum mengerjakan (subject, week)
+router.post('/pr-remind', onboardingController.remindPRStudents);
 
 router.post('/transfer-reward', onboardingController.transferRewardCoin);
 router.get('/check-satpam', onboardingController.checkSatpamStatus);

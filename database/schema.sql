@@ -18,6 +18,7 @@ CREATE TABLE public.students (
   created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
   has_infaq_can boolean NOT NULL DEFAULT false,
   last_can_received_at timestamp with time zone,
+  last_infaq_reminded_at timestamp with time zone,
   current_surah_id integer,
   current_ayah integer DEFAULT 0,
   poin integer DEFAULT 0,
@@ -230,7 +231,7 @@ CREATE TABLE public.pr_extension_requests (
   subject text NOT NULL,
   week integer NOT NULL,
   reason text,
-  status text NOT NULL DEFAULT 'pending'::text, -- pending | granted
+  status text NOT NULL DEFAULT 'pending'::text, -- pending | granted | rejected
   with_penalty boolean,
   extension_until timestamp with time zone,
   created_by text,

@@ -1,6 +1,7 @@
 const studentModel = require('../model/studentModel');
 const supabase = require('../config/supabaseClient');
 const bcrypt = require('bcrypt');
+const pushService = require('../service/pushService');
 
 
 // POST /students
@@ -786,6 +787,62 @@ const verifyStudentPin = async (req, res) => {
     }
 };
 
+const sendInfaqReminder = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { message } = req.body;
+        const teacherUsername = req.user.username;
+
+        // 1. Ambil data siswa
+        const student = await studentModel.getStudentById(id, teacherUsername);
+
+        if (!student) {
+            return res.status(404).json({ status: "error", message: "Siswa tidak ditemukan atau Anda tidak memiliki akses." });
+        }
+
+        // 2. Validasi status kaleng
+        if (!student.has_infaq_can) {
+            return res.status(400).json({ status: "error", message: "Siswa sudah mengembalikan kaleng infaq." });
+        }
+
+        // 3. Validasi batasan 24 jam
+        const now = new Date();
+        if (student.last_infaq_reminded_at) {
+            const lastReminded = new Date(student.last_infaq_reminded_at);
+            const hoursDiff = Math.abs(now - lastReminded) / 36e5; // Convert ms to hours
+            if (hoursDiff < 24) {
+                return res.status(429).json({ status: "error", message: `Notifikasi kaleng hanya bisa dikirim sekali setiap 24 jam. Tersisa ${Math.ceil(24 - hoursDiff)} jam lagi.` });
+            }
+        }
+
+        // 4. Pastikan siswa punya device yang subscribe push (tabel push_subscriptions)
+        const { count, error: subErr } = await supabase
+            .from('push_subscriptions')
+            .select('id', { count: 'exact', head: true })
+            .eq('student_id', id);
+        if (subErr) throw subErr;
+        if (!count) {
+            return res.status(400).json({ status: "error", message: "Siswa belum mengaktifkan notifikasi push di aplikasinya." });
+        }
+
+        // 5. Kirim push (pushService otomatis menyapa "Halo <nama depan>! ...")
+        const defaultMessage = 'Sepertinya kamu belum mengumpulkan kaleng infaq. Mohon segera dikembalikan ya 😊';
+        await pushService.sendToStudent(id, {
+            title: 'Pengingat Kaleng Infaq 🥫',
+            body: (message && message.trim()) || defaultMessage,
+            url: '/chats?from=push',
+        });
+
+        // 6. Catat waktu pengiriman utk batasan 24 jam
+        await studentModel.updateInfaqReminderTime(id, now.toISOString());
+
+        return res.status(200).json({ status: "success", message: "Notifikasi pengingat kaleng berhasil dikirim." });
+    } catch (error) {
+        console.error("Send Infaq Reminder Error:", error.message);
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
 module.exports = {
     addStudent,
     getAllStudents,
@@ -807,5 +864,6 @@ module.exports = {
     getExamCaptures,
     getExamRecordings,
     updateStudentAttendanceStatus,
-    verifyStudentPin
+    verifyStudentPin,
+    sendInfaqReminder
 };

@@ -467,7 +467,7 @@ const getMyTasks = async (req, res) => {
             pending.push({
                 subject: q.subject, week: q.week, deadline_at: l.deadline_at || null, late,
                 has_extension: !!mine,
-                izin_status: izinMap[key] || 'none', // none | pending | granted
+                izin_status: izinMap[key] || 'none', // none | pending | granted | rejected
             });
         });
         pending.sort((a, b) => (a.subject).localeCompare(b.subject) || a.week - b.week);
