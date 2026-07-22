@@ -882,6 +882,45 @@ const resetPassword = async (req, res) => {
 };
 
 
+// POST /students/:id/change-password (guru reset password murid)
+const changeStudentPassword = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { old_password, new_password } = req.body;
+        if (!old_password || !new_password) {
+            return res.status(400).json({ status: 'error', message: 'Password lama dan baru wajib diisi.' });
+        }
+        if (new_password.length < 6) {
+            return res.status(400).json({ status: 'error', message: 'Password baru minimal 6 karakter.' });
+        }
+
+        const { data: student, error: sErr } = await supabase
+            .from('students').select('name, password').eq('id', id).single();
+        if (sErr || !student) return res.status(404).json({ status: 'error', message: 'Siswa tidak ditemukan.' });
+
+        const firstName = (n) => String(n || '').trim().split(/\s+/)[0].toLowerCase();
+        const isDefault = old_password.toLowerCase() === firstName(student.name) + '123';
+        const isCustom = student.password
+            ? (student.password.startsWith('$2')
+                ? await bcrypt.compare(old_password, student.password)
+                : old_password === student.password)
+            : false;
+
+        if (!isDefault && !isCustom) {
+            return res.status(401).json({ status: 'error', message: 'Password lama salah.' });
+        }
+
+        const hash = await bcrypt.hash(new_password, 10);
+        const { error: uErr } = await supabase.from('students').update({ password: hash }).eq('id', id);
+        if (uErr) throw uErr;
+
+        return res.status(200).json({ status: 'success', message: 'Password berhasil diubah.' });
+    } catch (err) {
+        console.error('changeStudentPassword error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
 module.exports = {
     addStudent,
     getAllStudents,
@@ -897,6 +936,7 @@ module.exports = {
     uploadGalleryPhoto,
     deleteStudentPhoto,
     getLatestStudentPhoto,
+    changeStudentPassword,
     getStudentsWithStats,
     getPointHistory,
     getSatpamLogs,

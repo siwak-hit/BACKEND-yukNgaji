@@ -70,6 +70,8 @@ router.get('/:id/exam-recordings', verifyToken, studentController.getExamRecordi
 router.post('/:id/verify-pin', verifyToken, studentController.verifyStudentPin);
 router.put('/:id/attendance', verifyToken, studentController.updateStudentAttendanceStatus);
 
+router.post('/:id/change-password', verifyToken, studentController.changeStudentPassword);
+
 router.post('/:id/murojaah', logMurojaah);
 // (Push subscription murid disimpan lewat /api/student/push/subscribe — lihat studentAuthRouter)
 

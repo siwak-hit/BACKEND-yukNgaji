@@ -1,7 +1,7 @@
 const supabase = require('../config/supabaseClient');
 
 const saveManualGrade = async (req, res) => {
-    const { student_id, subject, score, with_penalty } = req.body;
+    const { student_id, subject, score, with_penalty, week, mark_completed } = req.body;
     const username = req.user.username;
 
     if (!student_id || !subject || score === undefined) {
@@ -10,17 +10,17 @@ const saveManualGrade = async (req, res) => {
 
     try {
         let finalScore = parseInt(score);
-        if (with_penalty) {
-            finalScore = Math.floor(finalScore * 0.9);
-        }
+        if (with_penalty) finalScore = Math.floor(finalScore * 0.9);
 
-        // Cari exam dummy atau buat jika belum ada, untuk menampung nilai manual
+        // Cari atau buat exam dummy per-week jika ada week
+        const examTitle = week ? `Nilai Manual Cetak Mg-${week}` : 'Nilai Manual Cetak';
+
         let { data: dummyExam, error: findError } = await supabase
             .from('exams')
             .select('id')
             .eq('created_by', username)
             .eq('subject', subject)
-            .eq('title', 'Nilai Manual Cetak')
+            .eq('title', examTitle)
             .maybeSingle();
 
         if (findError) throw findError;
@@ -29,8 +29,8 @@ const saveManualGrade = async (req, res) => {
             const { data: newDummyExam, error: createError } = await supabase
                 .from('exams')
                 .insert({
-                    title: 'Nilai Manual Cetak',
-                    subject: subject,
+                    title: examTitle,
+                    subject,
                     created_by: username,
                     is_active: false,
                     is_daring: false
@@ -41,24 +41,39 @@ const saveManualGrade = async (req, res) => {
             dummyExam = newDummyExam;
         }
 
-        const exam_id = dummyExam.id;
-
-        // Upsert nilai ke exam_results
         const { data, error } = await supabase
             .from('exam_results')
             .upsert({
-                student_id: student_id,
-                exam_id: exam_id,
-                subject: subject,
-                score: finalScore,
-                is_manual: true // Tandai sebagai nilai manual
-            }, {
-                onConflict: 'student_id, exam_id'
-            })
+                student_id,
+                exam_id: dummyExam.id,
+                subject,
+                score: finalScore
+            }, { onConflict: 'student_id, exam_id' })
             .select()
             .single();
 
         if (error) throw error;
+
+        // Tandai pertemuan selesai di onboarding_results jika diminta
+        if (mark_completed && week) {
+            const weekInt = parseInt(week);
+            const { data: existing } = await supabase
+                .from('onboarding_results')
+                .select('id')
+                .eq('student_id', student_id)
+                .eq('subject', subject)
+                .eq('week', weekInt)
+                .maybeSingle();
+
+            if (existing) {
+                await supabase.from('onboarding_results')
+                    .update({ score: finalScore })
+                    .eq('id', existing.id);
+            } else {
+                await supabase.from('onboarding_results')
+                    .insert({ student_id, subject, week: weekInt, score: finalScore });
+            }
+        }
 
         res.status(200).json({ status: "success", message: "Nilai manual berhasil disimpan.", data: { final_score: finalScore } });
 
