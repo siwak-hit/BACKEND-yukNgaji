@@ -21,6 +21,8 @@ router.get('/my/memorization', ctrl.getMyMemorization);   // murid: hafalan diri
 router.get('/my/gallery', ctrl.getMyGallery);             // murid: galeri foto diri sendiri
 router.get('/my/grades', ctrl.getMyGrades);               // murid: nilai tiap tugas
 router.get('/notifications', ctrl.getMyNotifications);    // murid: notif izin disetujui
+router.post('/change-password', ctrl.changePassword); // murid: ganti password
+router.post('/forgot-password-request', ctrl.forgotPasswordRequest); // murid: minta reset password
 router.post('/reports', ctrl.submitReport);              // murid kirim aduan
 router.get('/reports/mine', ctrl.getMyReports);          // murid: riwayat + lock
 router.get('/reports', ctrl.getReportsForTeacher);       // guru: daftar aduan

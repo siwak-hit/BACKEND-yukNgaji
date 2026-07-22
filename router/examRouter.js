@@ -24,6 +24,10 @@ router.post('/buy-time', examController.buyExamTime);
 router.post('/buy-hint', examController.buyExamHint);
 router.post('/tutorial/complete', examController.completeExamTutorial);
 
+// [BARU] Ambil soal dari bank soal lama untuk dicetak
+router.get('/questions-for-print', examController.getQuestionsForPrint);
+
+
 // Perpanjangan deadline per-murid (ujian daring) — mirror PR
 router.post('/:id/grant-extension', examController.grantExamExtension);
 

@@ -843,6 +843,45 @@ const sendInfaqReminder = async (req, res) => {
     }
 };
 
+const resetPassword = async (req, res) => {
+    try {
+        const teacherUsername = req.user.username;
+        const studentId = req.params.id;
+
+        const student = await studentModel.getStudentById(studentId, teacherUsername);
+        if (!student) {
+            return res.status(404).json({ status: "error", message: "Siswa tidak ditemukan atau Anda tidak memiliki akses" });
+        }
+
+        const { error } = await supabase
+            .from('students')
+            .update({
+                password: null,
+                needs_password_reset: false
+            })
+            .eq('id', studentId);
+
+        if (error) throw error;
+
+        try {
+            await pushService.sendToStudent(studentId, {
+                title: 'Password Direset ✅',
+                body: 'Password kamu telah direset oleh Kak Aziz. Sekarang kamu bisa login dengan password awal (nama depan + 123).',
+                url: '/',
+            });
+        } catch (e) {
+            console.error('Push notif reset password error:', e.message);
+        }
+
+        res.status(200).json({ status: "success", message: `Password untuk ${student.name} berhasil direset.` });
+
+    } catch (error) {
+        console.error("Reset Password Error:", error.message);
+        res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+
 module.exports = {
     addStudent,
     getAllStudents,
@@ -865,5 +904,6 @@ module.exports = {
     getExamRecordings,
     updateStudentAttendanceStatus,
     verifyStudentPin,
-    sendInfaqReminder
+    sendInfaqReminder,
+    resetPassword
 };

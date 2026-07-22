@@ -610,6 +610,78 @@ const getPushKey = (req, res) => {
     return res.status(200).json({ status: 'success', data: { key } });
 };
 
+// POST /api/student/change-password (token murid)
+const changePassword = async (req, res) => {
+    try {
+        const student_id = req.user.student_id;
+        if (!student_id) return res.status(403).json({ status: 'error', message: 'Hanya untuk murid' });
+
+        const { oldPassword, newPassword } = req.body;
+        if (!oldPassword || !newPassword) {
+            return res.status(400).json({ status: 'error', message: 'Password lama dan baru wajib diisi' });
+        }
+        if (newPassword.length < 6) {
+            return res.status(400).json({ status: 'error', message: 'Password baru minimal 6 karakter' });
+        }
+
+        const { data: student, error: sErr } = await supabase
+            .from('students')
+            .select('name, password')
+            .eq('id', student_id)
+            .single();
+
+        if (sErr || !student) {
+            return res.status(404).json({ status: 'error', message: 'Siswa tidak ditemukan' });
+        }
+
+        // Cek password lama
+        const isDefaultPassword = oldPassword.toLowerCase() === (firstName(student.name) + '123');
+        const isCustomPasswordMatch = student.password ? (
+            student.password.startsWith('$2')
+                ? await bcrypt.compare(oldPassword, student.password)
+                : oldPassword === student.password
+        ) : false;
+
+        if (!isDefaultPassword && !isCustomPasswordMatch) {
+            return res.status(401).json({ status: 'error', message: 'Password lama salah' });
+        }
+
+        // Buat hash untuk password baru dan update DB
+        const newPasswordHash = await bcrypt.hash(newPassword, 10);
+        const { error: uErr } = await supabase
+            .from('students')
+            .update({ password: newPasswordHash, needs_password_reset: false }) // Setelah berhasil ganti, hapus flag reset
+            .eq('id', student_id);
+
+        if (uErr) throw uErr;
+
+        return res.status(200).json({ status: 'success', message: 'Password berhasil diubah' });
+    } catch (err) {
+        console.error('Change password error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// POST /api/student/forgot-password-request (token murid)
+const forgotPasswordRequest = async (req, res) => {
+    try {
+        const student_id = req.user.student_id;
+        if (!student_id) return res.status(403).json({ status: 'error', message: 'Hanya untuk murid' });
+
+        const { error } = await supabase
+            .from('students')
+            .update({ needs_password_reset: true })
+            .eq('id', student_id);
+
+        if (error) throw error;
+
+        return res.status(200).json({ status: 'success', message: 'Permintaan reset password telah dicatat' });
+    } catch (err) {
+        console.error('Forgot password request error:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
 // POST /api/student/push/subscribe  (token murid) — simpan PushSubscription device
 const savePushSubscription = async (req, res) => {
     try {
@@ -620,7 +692,7 @@ const savePushSubscription = async (req, res) => {
 
         const { error } = await supabase
             .from('push_subscriptions')
-            .upsert({ student_id, endpoint: sub.endpoint, subscription: sub }, { onConflict: 'student_id,endpoint' });
+            .upsert({ student_id, endpoint: sub.endpoint, subscription: sub }, { onConflict: 'endpoint' });
         if (error) throw error;
         return res.status(200).json({ status: 'success' });
     } catch (err) {
@@ -629,4 +701,4 @@ const savePushSubscription = async (req, res) => {
     }
 };
 
-module.exports = { login, submitReport, getMyReports, getReportsForTeacher, resolveReport, getMyTasks, getMyNotifications, getMyProfile, getPublicStudents, submitPublicIzin, getPushKey, savePushSubscription, getPendingIzin, decideIzin, overdueScan, getIzinToday, refundCoins, getMyMemorization, getMyGallery, getMyGrades };
+module.exports = { login, submitReport, getMyReports, getReportsForTeacher, resolveReport, getMyTasks, getMyNotifications, getMyProfile, getPublicStudents, submitPublicIzin, getPushKey, savePushSubscription, getPendingIzin, decideIzin, overdueScan, getIzinToday, refundCoins, getMyMemorization, getMyGallery, getMyGrades, changePassword, forgotPasswordRequest };

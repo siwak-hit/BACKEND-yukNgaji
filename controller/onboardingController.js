@@ -1525,44 +1525,55 @@ const checkAndResetBully = async (req, res) => {
     }
 };
 
+const sharp = require('sharp');
+
 const uploadQuestionImage = async (req, res) => {
     try {
-        // Cek apakah ada file yang dikirim
         if (!req.file) {
             return res.status(400).json({ status: "error", message: "Tidak ada file gambar yang dikirim." });
         }
 
         const file = req.file;
 
-        // Bikin nama file unik biar gak bentrok kalau ada guru yang upload nama filenya sama
-        const fileExtension = file.originalname.split('.').pop();
-        const fileName = `soal_${Date.now()}_${Math.round(Math.random() * 1000)}.${fileExtension}`;
+        // Kompresi ke WebP dan dapatkan buffer baru
+        const webpBuffer = await sharp(file.buffer)
+            .webp({ quality: 80 }) // Kualitas 80 adalah kompromi yang baik
+            .toBuffer();
 
-        // 1. Upload file fisik ke bucket 'question_images'
-        const { data, error } = await supabase.storage
+        // Nama file unik dengan ekstensi .webp
+        const fileName = `soal_${Date.now()}_${Math.round(Math.random() * 1000)}.webp`;
+
+        // Upload buffer WebP ke Supabase
+        const { error: uploadError } = await supabase.storage
             .from('question_images')
-            .upload(fileName, file.buffer, {
-                contentType: file.mimetype,
-                upsert: false // Jangan timpa file yang ada
+            .upload(fileName, webpBuffer, {
+                contentType: 'image/webp',
+                upsert: false
             });
 
-        if (error) throw error;
+        if (uploadError) {
+            console.error("Supabase Upload Error:", uploadError);
+            throw new Error(`Gagal mengunggah gambar ke Supabase: ${uploadError.message}`);
+        }
 
-        // 2. Dapatkan URL Publiknya
+        // Dapatkan URL Publik
         const { data: publicUrlData } = supabase.storage
             .from('question_images')
             .getPublicUrl(fileName);
 
-        // 3. Kembalikan URL publik ke Frontend
+        if (!publicUrlData || !publicUrlData.publicUrl) {
+            throw new Error("Gagal mendapatkan URL publik dari Supabase setelah unggah.");
+        }
+
         res.status(200).json({
             status: "success",
-            message: "Gambar berhasil diupload",
+            message: "Gambar berhasil diupload dan dikompres",
             data: { url: publicUrlData.publicUrl }
         });
 
     } catch (error) {
-        console.error("Upload Error:", error);
-        res.status(500).json({ status: "error", message: error.message });
+        console.error("Upload Question Image Error:", error);
+        res.status(500).json({ status: "error", message: error.message || "Terjadi kesalahan internal pada server." });
     }
 };
 

@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const upload = multer({ dest: 'uploads/' });
+// memoryStorage: file.buffer terisi (dest:'uploads/' bikin buffer undefined + FS Vercel read-only)
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 const onboardingController = require('../controller/onboardingController');
 const { verifyToken, generatePRLink } = require('../middleware/authMiddleware');
 

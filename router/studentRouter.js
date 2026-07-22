@@ -24,6 +24,7 @@ router.post('/', studentController.addStudent);
 router.get('/', studentController.getAllStudents);
 router.get('/:id', studentController.getStudent);
 router.put('/:id', studentController.updateStudentInfo);
+router.post('/:id/reset-password', studentController.resetPassword);
 router.delete('/:id', studentController.removeStudent);
 
 // New Progress and Todo endpoints
