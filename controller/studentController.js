@@ -361,7 +361,7 @@ const getStudentLagStatus = async (req, res) => {
         // 2. Semua hasil anak untuk mapel-mapel ini
         const { data: studentWeekData, error: swErr } = await supabase
             .from('onboarding_results')
-            .select('subject, week')
+            .select('subject, week, is_graded')
             .eq('student_id', id)
             .in('subject', subjects);
 
@@ -376,26 +376,30 @@ const getStudentLagStatus = async (req, res) => {
                 .map(q => q.week);
             const classWeek = classWeeks.length > 0 ? Math.max(...classWeeks) : 0;
 
+            const subjectRows = studentWeekData.filter(r => r.subject === subject);
+
             // Max week yang sudah dikerjakan anak
-            const studentWeeks = studentWeekData
-                .filter(r => r.subject === subject)
-                .map(r => r.week);
+            const studentWeeks = subjectRows.map(r => r.week);
             const studentWeek = studentWeeks.length > 0 ? Math.max(...studentWeeks) : 0;
 
             const isLagging = classWeek > 0 && studentWeek < classWeek;
 
-            // Hitung week mana saja yang terlewat (belum dikerjakan anak)
+            // missedWeeks = belum dikerjakan sama sekali.
+            // ungradedWeeks = sudah dicetak/dikerjakan tapi belum dinilai guru.
             const doneWeeks = new Set(studentWeeks);
+            const ungradedSet = new Set(subjectRows.filter(r => r.is_graded === false).map(r => r.week));
             const missedWeeks = [];
             for (let w = 1; w <= classWeek; w++) {
                 if (!doneWeeks.has(w)) missedWeeks.push(w);
             }
+            const ungradedWeeks = [...ungradedSet].sort((a, b) => a - b);
 
             result[subject] = {
                 classWeek,
                 studentWeek,
                 isLagging,
-                missedWeeks
+                missedWeeks,
+                ungradedWeeks
             };
         }
 

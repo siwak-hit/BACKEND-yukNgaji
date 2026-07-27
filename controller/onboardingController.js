@@ -631,11 +631,12 @@ const getStudentProgress = async (req, res) => {
     try {
         const studentId = req.params.id;
 
-        // Ambil riwayat nilai siswa
+        // Ambil riwayat nilai siswa (exclude yang baru dicetak & belum dinilai guru)
         const { data: progressData, error } = await supabase
             .from('onboarding_results')
             .select('id, week, subject, score')
             .eq('student_id', studentId)
+            .neq('is_graded', false)
             .order('week', { ascending: true });
 
         if (error) throw error;
