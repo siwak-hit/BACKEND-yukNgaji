@@ -410,6 +410,35 @@ const refundCoins = async (req, res) => {
     }
 };
 
+// Ujian daring milik guru si murid yang belum dikerjakan (selesai = ada di exam_results).
+const getPendingExamTasks = async (student_id) => {
+    const { data: me } = await supabase.from('students').select('created_by').eq('id', student_id).maybeSingle();
+    if (!me || !me.created_by) return [];
+
+    const [{ data: exams }, { data: doneExams }] = await Promise.all([
+        supabase.from('exams')
+            .select('id, title, subject, duration_minutes, deadline_at, extended_students')
+            .eq('created_by', me.created_by).eq('is_active', true).eq('is_daring', true),
+        supabase.from('exam_results').select('exam_id').eq('student_id', student_id),
+    ]);
+    const doneSet = new Set((doneExams || []).map(r => String(r.exam_id)));
+    const now = new Date();
+
+    return (exams || []).filter(e => !doneSet.has(String(e.id))).map(e => {
+        let ext = e.extended_students;
+        try { while (typeof ext === 'string') ext = JSON.parse(ext); } catch { ext = []; }
+        if (!Array.isArray(ext)) ext = [];
+        const mine = ext.find(x => (typeof x === 'object' ? x.student_id : x) === student_id);
+        const extUntil = mine && mine.until ? new Date(mine.until) : null;
+        const late = e.deadline_at ? (extUntil ? now > extUntil : now > new Date(e.deadline_at)) : false;
+        return {
+            kind: 'exam', exam_id: e.id, title: e.title, subject: e.subject,
+            duration_minutes: e.duration_minutes || 60,
+            deadline_at: e.deadline_at || null, late, has_extension: !!mine,
+        };
+    });
+};
+
 // GET /api/student/tasks  (token murid)
 // PR/tugas = pr_locks(is_locked=true). Selesai = ada di onboarding_results.
 // Balikin yang BELUM dikerjakan + flag telat (lewat deadline & tanpa dispensasi aktif).
@@ -465,6 +494,7 @@ const getMyTasks = async (req, res) => {
                 late = extUntil ? now > extUntil : now > dl;
             }
             pending.push({
+                kind: 'pr',
                 subject: q.subject, week: q.week, deadline_at: l.deadline_at || null, late,
                 has_extension: !!mine,
                 izin_status: izinMap[key] || 'none', // none | pending | granted | rejected
@@ -472,7 +502,11 @@ const getMyTasks = async (req, res) => {
         });
         pending.sort((a, b) => (a.subject).localeCompare(b.subject) || a.week - b.week);
 
-        return res.status(200).json({ status: 'success', data: pending });
+        // UJIAN daring yang sudah diterbitkan ikut masuk daftar tugas (dikerjakan sama seperti PR).
+        // Hanya is_daring: ujian kelas/offline tak boleh bocor ke HP murid.
+        const examTasks = await getPendingExamTasks(student_id);
+
+        return res.status(200).json({ status: 'success', data: [...pending, ...examTasks] });
     } catch (err) {
         console.error('Get tasks error:', err.message);
         return res.status(500).json({ status: 'error', message: err.message });

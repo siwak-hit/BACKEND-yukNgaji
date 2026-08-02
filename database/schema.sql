@@ -444,3 +444,43 @@ CREATE TABLE public.coin_transfers (
   CONSTRAINT coin_transfers_sender_id_fkey FOREIGN KEY (sender_id) REFERENCES public.students(id),
   CONSTRAINT coin_transfers_receiver_id_fkey FOREIGN KEY (receiver_id) REFERENCES public.students(id)
 );
+
+-- Ujian Lisan v2 (lihat database/migration_oral_v2.sql).
+-- Tabel oral_exam_* di atas = sistem LAMA, sudah tidak dipakai kode (data riwayat dibiarkan).
+CREATE TABLE public.oral_prompts (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_by text,
+  subject text NOT NULL,
+  category text NOT NULL,
+  title text NOT NULL,
+  duration_seconds integer NOT NULL DEFAULT 30,
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
+  CONSTRAINT oral_prompts_pkey PRIMARY KEY (id),
+  CONSTRAINT oral_prompts_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(username)
+);
+CREATE TABLE public.oral_sessions (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_by text,
+  subject text NOT NULL,
+  title text,
+  per_student_seconds integer NOT NULL DEFAULT 300,
+  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
+  CONSTRAINT oral_sessions_pkey PRIMARY KEY (id),
+  CONSTRAINT oral_sessions_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(username)
+);
+CREATE TABLE public.oral_session_students (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  session_id uuid NOT NULL,
+  student_id uuid NOT NULL,
+  order_index integer NOT NULL DEFAULT 0,
+  prompt_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  status text NOT NULL DEFAULT 'pending',
+  final_score integer,
+  details jsonb NOT NULL DEFAULT '[]'::jsonb,
+  done_at timestamp with time zone,
+  CONSTRAINT oral_session_students_v2_pkey PRIMARY KEY (id),
+  CONSTRAINT oral_session_students_v2_session_fkey FOREIGN KEY (session_id) REFERENCES public.oral_sessions(id) ON DELETE CASCADE,
+  CONSTRAINT oral_session_students_v2_student_fkey FOREIGN KEY (student_id) REFERENCES public.students(id),
+  CONSTRAINT oral_session_students_v2_unique UNIQUE (session_id, student_id)
+);

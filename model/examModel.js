@@ -6,13 +6,18 @@ const createExam = async (examData) => {
     return data;
 };
 
+// Exam "boneka" yang dibuat gradeController.saveManualGrade cuma wadah exam_results
+// buat nilai manual/cetak — bukan ujian beneran, jadi jangan muncul di daftar "Pilih Ujian".
+const DUMMY_EXAM_PREFIX = 'Nilai Manual Cetak';
+
 // [OPTIMASI] Hanya ambil data inti untuk list tabel (Tanpa narik semua text panjang)
 const getExamsByTeacher = async (username) => {
     const { data, error } = await supabase
         .from('exams')
         // [FIX] Tambahkan is_daring & deadline_at
-        .select('id, title, subject, duration_minutes, is_active, created_at, is_daring, deadline_at') 
+        .select('id, title, subject, duration_minutes, is_active, created_at, is_daring, deadline_at')
         .eq('created_by', username)
+        .not('title', 'ilike', `${DUMMY_EXAM_PREFIX}%`)
         .order('created_at', { ascending: false });
     if (error) throw error;
     return data;
@@ -65,7 +70,15 @@ const saveExamQuestions = async (examId, questionsArray) => {
     return [];
 };
 
+// FK ke exams tidak pakai ON DELETE CASCADE, jadi anak-anaknya dihapus duluan.
+// Tanpa ini delete selalu 500 (FK violation) & ujian tetap nongol di UI.
+const EXAM_CHILD_TABLES = ['exam_questions', 'exam_results', 'exam_retake_permissions', 'pr_notifications', 'app_feedbacks'];
+
 const deleteExam = async (examId) => {
+    for (const table of EXAM_CHILD_TABLES) {
+        const { error } = await supabase.from(table).delete().eq('exam_id', examId);
+        if (error) throw error;
+    }
     const { error } = await supabase.from('exams').delete().eq('id', examId);
     if (error) throw error;
     return true;
