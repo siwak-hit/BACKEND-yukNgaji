@@ -224,10 +224,11 @@ const createSession = async (req, res) => {
 const getSessionDetail = async (req, res) => {
     try {
         const { data: session, error } = await supabase.from('oral_sessions')
-            .select('id, subject, title, per_student_seconds, created_at')
+            .select('id, subject, title, per_student_seconds, created_at, live_code')
             .eq('id', req.params.id).eq('created_by', req.user.username).maybeSingle();
         if (error) throw error;
         if (!session) return res.status(404).json({ status: 'error', message: 'Sesi tidak ditemukan.' });
+        session.live_code = await ensureLiveCode(session);
 
         const { data: rows, error: rErr } = await supabase.from('oral_session_students')
             .select('id, student_id, order_index, prompt_ids, status, final_score, details, done_at')
@@ -255,6 +256,81 @@ const getSessionDetail = async (req, res) => {
             status: 'success',
             data: { ...session, status: sessionStatus(rows), queue },
         });
+    } catch (error) {
+        res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+
+// ---------------- MODE 2 DEVICE (layar guru ↔ layar murid) ----------------
+// Tidak ada websocket: guru MENULIS satu baris state, layar murid MEMBACA tiap detik.
+// Kuncinya `startAt` distempel SERVER dan tiap balasan menyertakan `now`, jadi kedua
+// device bisa mengoreksi selisih jamnya sendiri dan hitung mundurnya jalan lokal —
+// polling telat sedetik pun timernya tetap sama persis.
+const IDLE = { phase: 'idle' };
+const makeCode = () => Math.random().toString(36).slice(2, 8).toUpperCase();
+
+// Kode dibuat saat sesi pertama kali dibuka (bukan saat dibuat) supaya sesi lama ikut kebagian.
+const ensureLiveCode = async (session) => {
+    if (session.live_code) return session.live_code;
+    for (let i = 0; i < 3; i++) {
+        const code = makeCode();
+        const { error } = await supabase.from('oral_sessions')
+            .update({ live_code: code }).eq('id', session.id);
+        if (!error) return code;
+        if (error.code !== '23505') throw error;   // 23505 = kode kembar, coba lagi
+    }
+    throw new Error('Gagal membuat kode layar.');
+};
+
+const pushLive = async (req, res) => {
+    try {
+        const state = { ...(req.body.state || {}) };
+        // Distempel sekali saja: kiriman berikutnya (mis. nempel pesan/gambar) bawa startAt lama
+        // supaya timer yang sedang jalan tidak ikut kereset.
+        if (state.phase === 'run' && !state.startAt) state.startAt = Date.now();
+
+        const { data, error } = await supabase.from('oral_sessions')
+            .update({ live_state: state }).eq('id', req.params.id).eq('created_by', req.user.username)
+            .select('id').maybeSingle();
+        if (error) throw error;
+        if (!data) return res.status(404).json({ status: 'error', message: 'Sesi tidak ditemukan.' });
+
+        res.status(200).json({ status: 'success', data: { state, now: Date.now() } });
+    } catch (error) {
+        res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+
+// Publik (dipanggil layar murid yang tidak login) — kodenya acak & cuma berisi soal berjalan.
+const getLive = async (req, res) => {
+    try {
+        const { data, error } = await supabase.from('oral_sessions')
+            .select('title, subject, live_state').eq('live_code', String(req.params.code || '').toUpperCase()).maybeSingle();
+        if (error) throw error;
+        if (!data) return res.status(404).json({ status: 'error', message: 'Layar tidak ditemukan. Cek lagi linknya.' });
+
+        // Foto/GIF kejutan (base64) TIDAK ikut di sini — polling tiap detik jadi berat.
+        // Yang dikirim cuma penandanya; gambarnya diambil sekali lewat endpoint di bawah.
+        const st = data.live_state || IDLE;
+        const state = st.media?.data ? { ...st, media: { id: st.media.id, until: st.media.until } } : st;
+
+        res.status(200).json({
+            status: 'success',
+            data: { title: data.title, subject: data.subject, state, now: Date.now() },
+        });
+    } catch (error) {
+        res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+
+const getLiveMedia = async (req, res) => {
+    try {
+        const { data, error } = await supabase.from('oral_sessions')
+            .select('live_state').eq('live_code', String(req.params.code || '').toUpperCase()).maybeSingle();
+        if (error) throw error;
+        const media = data?.live_state?.media;
+        if (!media?.data) return res.status(404).json({ status: 'error', message: 'Tidak ada gambar.' });
+        res.status(200).json({ status: 'success', data: { id: media.id, data: media.data } });
     } catch (error) {
         res.status(500).json({ status: 'error', message: error.message });
     }
@@ -369,6 +445,7 @@ const getStudentSummary = async (req, res) => {
 module.exports = {
     listPrompts, createPrompt, updatePrompt, deletePrompt, bulkDeletePrompts,
     listSessions, createSession, getSessionDetail, deleteSession, bulkDeleteSessions,
+    pushLive, getLive, getLiveMedia,
     submitStudentResult, getStudentSummary,
     _scoreOne: scoreOne,   // dipakai scripts/testOralScore.js
 };
