@@ -11,7 +11,9 @@ const SUBJECTS = ['tajwid', 'fiqih', 'tauhid'];
 // - selesai sebelum waktu habis  : 100 kalau <= separuh durasi, turun linear sampai 75 saat mepet
 // - waktu habis tapi anaknya selesai : 50 (fifty-fifty)
 // - waktu habis & belum selesai      : 20
+// - menyerah (pass)                  : 0  — anaknya sendiri yang bilang tidak tahu
 const scoreOne = (outcome, usedSeconds, durationSeconds) => {
+    if (outcome === 'pass') return 0;
     if (outcome === 'timeout_done') return 50;
     if (outcome === 'timeout_undone') return 20;
     const dur = Math.max(1, Number(durationSeconds) || 1);
@@ -24,6 +26,7 @@ const OUTCOME_LABEL = {
     early: 'Selesai lebih cepat',
     timeout_done: 'Pas waktu habis (selesai)',
     timeout_undone: 'Waktu habis, belum selesai',
+    pass: 'Menyerah',
 };
 
 // ---------------- BANK PERINTAH ----------------
@@ -309,28 +312,10 @@ const getLive = async (req, res) => {
         if (error) throw error;
         if (!data) return res.status(404).json({ status: 'error', message: 'Layar tidak ditemukan. Cek lagi linknya.' });
 
-        // Foto/GIF kejutan (base64) TIDAK ikut di sini — polling tiap detik jadi berat.
-        // Yang dikirim cuma penandanya; gambarnya diambil sekali lewat endpoint di bawah.
-        const st = data.live_state || IDLE;
-        const state = st.media?.data ? { ...st, media: { id: st.media.id, until: st.media.until } } : st;
-
         res.status(200).json({
             status: 'success',
-            data: { title: data.title, subject: data.subject, state, now: Date.now() },
+            data: { title: data.title, subject: data.subject, state: data.live_state || IDLE, now: Date.now() },
         });
-    } catch (error) {
-        res.status(500).json({ status: 'error', message: error.message });
-    }
-};
-
-const getLiveMedia = async (req, res) => {
-    try {
-        const { data, error } = await supabase.from('oral_sessions')
-            .select('live_state').eq('live_code', String(req.params.code || '').toUpperCase()).maybeSingle();
-        if (error) throw error;
-        const media = data?.live_state?.media;
-        if (!media?.data) return res.status(404).json({ status: 'error', message: 'Tidak ada gambar.' });
-        res.status(200).json({ status: 'success', data: { id: media.id, data: media.data } });
     } catch (error) {
         res.status(500).json({ status: 'error', message: error.message });
     }
@@ -391,7 +376,7 @@ const submitStudentResult = async (req, res) => {
             const p = promptMap.get(i.prompt_id);
             const duration = p ? p.duration_seconds : (parseInt(i.duration) || 30);
             const used = Math.min(duration, Math.max(0, Math.round(Number(i.used_seconds) || 0)));
-            const outcome = ['early', 'timeout_done', 'timeout_undone'].includes(i.outcome) ? i.outcome : 'timeout_undone';
+            const outcome = ['early', 'timeout_done', 'timeout_undone', 'pass'].includes(i.outcome) ? i.outcome : 'timeout_undone';
             return {
                 prompt_id: i.prompt_id,
                 title: p ? p.title : '(perintah dihapus)',
@@ -445,7 +430,7 @@ const getStudentSummary = async (req, res) => {
 module.exports = {
     listPrompts, createPrompt, updatePrompt, deletePrompt, bulkDeletePrompts,
     listSessions, createSession, getSessionDetail, deleteSession, bulkDeleteSessions,
-    pushLive, getLive, getLiveMedia,
+    pushLive, getLive,
     submitStudentResult, getStudentSummary,
     _scoreOne: scoreOne,   // dipakai scripts/testOralScore.js
 };

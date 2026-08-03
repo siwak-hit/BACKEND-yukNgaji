@@ -11,6 +11,9 @@ assert.strictEqual(score('early', 30, 30), 75);   // ratio 1   -> 75
 // Waktu habis.
 assert.strictEqual(score('timeout_done', 30, 30), 50);
 assert.strictEqual(score('timeout_undone', 30, 30), 20);
+// Menyerah: 0, tak peduli sudah berapa detik jalan.
+assert.strictEqual(score('pass', 5, 30), 0);
+assert.strictEqual(score('pass', 0, 30), 0);
 // Durasi aneh tidak bikin NaN / bagi nol (durasi 0 dianggap habis terpakai, bukan NaN).
 assert.strictEqual(score('early', 5, 0), 75);
 assert.strictEqual(score('early', -3, 30), 100);

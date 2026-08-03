@@ -5,7 +5,6 @@ const { verifyToken } = require('../middleware/authMiddleware');
 
 // Layar murid (device kedua) — TANPA login, cukup kode acak di link. Harus di atas verifyToken.
 router.get('/live/:code', oral.getLive);
-router.get('/live/:code/media', oral.getLiveMedia);   // base64 kejutan, diambil sekali saja
 
 router.use(verifyToken);
 
